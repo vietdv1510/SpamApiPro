@@ -60,8 +60,9 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-bg-900 text-gray-100 select-none">
-      {/* macOS traffic lights drag zone — pure empty bar, double-click maximizes */}
+      {/* macOS traffic lights drag zone — data-tauri-drag-region enables double-click maximize */}
       <div
+        data-tauri-drag-region
         className="h-8 w-full shrink-0 bg-bg-900"
         style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
       />
