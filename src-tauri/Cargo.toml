@@ -20,19 +20,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # HTTP engine - siêu nhanh
-reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "http2"] }
+reqwest = { version = "0.12", features = ["json", "stream", "gzip", "brotli", "deflate", "http2", "rustls-tls"] }
 tokio = { version = "1", features = ["full"] }
 
 # Metrics chính xác
 hdrhistogram = "7"
 parking_lot = "0.12"
 
-# Xử lý thời gian chính xác
-chrono = { version = "0.4", features = ["serde"] }
 
-# Async utilities
-futures = "0.3"
-tokio-stream = "0.1"
 
 [profile.release]
 opt-level = 3

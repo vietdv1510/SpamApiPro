@@ -158,19 +158,30 @@ export function ResultsDashboard() {
         </div>
       </div>
 
-      {/* Race Condition + Key Metrics */}
-      <div className="grid grid-cols-4 gap-3">
+      {/* Race Condition + Key Metrics + Dispatch */}
+      <div className="grid grid-cols-5 gap-3">
         <RaceConditionBadge result={r} />
+        <div className="bg-secondary/10 border border-secondary/30 rounded-xl p-4">
+          <div className="text-2xl font-bold font-mono text-secondary">
+            {r.burst_dispatch_us < 1000
+              ? `${r.burst_dispatch_us.toFixed(0)}µs`
+              : `${(r.burst_dispatch_us / 1000).toFixed(2)}ms`}
+          </div>
+          <div className="text-xs text-gray-500 mt-1">Burst Dispatch</div>
+          <div className="text-xs mt-1 text-secondary/80">
+            Tool firing speed
+          </div>
+        </div>
         <MetricCard label="Avg Latency" value={r.latency_avg_ms} />
         <MetricCard
-          label="P95 Latency"
-          value={r.latency_p95_ms}
-          color={r.latency_p95_ms > 500 ? "text-danger" : "text-amber-400"}
+          label="Min Latency"
+          value={r.latency_min_ms}
+          color="text-success"
         />
         <MetricCard
-          label="P99 Latency"
-          value={r.latency_p99_ms}
-          color={r.latency_p99_ms > 1000 ? "text-danger" : "text-warning"}
+          label="Total Duration"
+          value={r.total_duration_ms}
+          color="text-amber-400"
         />
       </div>
 

@@ -1,22 +1,24 @@
-import { useRef, useEffect } from "react";
-import { useAppStore } from "../store";
+import { useRef, useEffect, useState } from "react";
+import { useAppStore, RequestResult } from "../store";
 
 export function LiveMonitor() {
-  const { runStatus, progress, liveTimeline, config } = useAppStore();
+  const { runStatus, progress, liveTimeline, liveCounters, config } =
+    useAppStore();
   const isRunning = runStatus === "running";
   const total = config.virtual_users;
-  const done = liveTimeline.length;
-  const success = liveTimeline.filter((r) => r.success).length;
-  const errors = liveTimeline.filter((r) => !r.success).length;
-  const avgLatency =
-    done > 0 ? liveTimeline.reduce((s, r) => s + r.latency_ms, 0) / done : 0;
+  const { done, success, errors, totalLatency } = liveCounters;
+  const avgLatency = done > 0 ? totalLatency / done : 0;
+
+  const [selectedRequest, setSelectedRequest] = useState<RequestResult | null>(
+    null,
+  );
 
   const logsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    if (logsRef.current) {
+    if (logsRef.current && !selectedRequest) {
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
-  }, [liveTimeline]);
+  }, [liveTimeline, selectedRequest]);
 
   if (runStatus === "idle") {
     return (
@@ -81,39 +83,73 @@ export function LiveMonitor() {
         ))}
       </div>
 
+      {/* Response Detail Panel */}
+      {selectedRequest && (
+        <div className="bg-bg-800 rounded-xl border border-primary/30 overflow-hidden slide-in">
+          <div className="px-4 py-2 border-b border-bg-600 flex justify-between items-center">
+            <span className="text-xs font-mono text-primary">
+              Response #{selectedRequest.id} —{" "}
+              {selectedRequest.status_code ?? "ERR"} —{" "}
+              {selectedRequest.latency_ms.toFixed(1)}ms
+            </span>
+            <button
+              onClick={() => setSelectedRequest(null)}
+              className="text-gray-500 hover:text-white text-xs px-2 py-1 rounded hover:bg-bg-600 transition-colors"
+            >
+              ✕ Close
+            </button>
+          </div>
+          <pre className="p-4 text-xs font-mono text-gray-300 overflow-auto max-h-48 whitespace-pre-wrap break-all">
+            {selectedRequest.response_body
+              ? tryFormatJson(selectedRequest.response_body)
+              : (selectedRequest.error ?? "No response body")}
+          </pre>
+        </div>
+      )}
+
       {/* Live request log */}
       <div className="flex-1 bg-bg-800 rounded-xl border border-bg-600 overflow-hidden flex flex-col">
         <div className="px-4 py-2 border-b border-bg-600 text-xs text-gray-500 font-mono flex justify-between">
-          <span>LIVE REQUESTS</span>
-          <span>{liveTimeline.length} captured</span>
+          <span>
+            LIVE REQUESTS {selectedRequest ? "" : "— click to view response"}
+          </span>
+          <span>
+            {done} total / {liveTimeline.length} displayed
+          </span>
         </div>
-        <div
-          ref={logsRef}
-          className="flex-1 overflow-y-auto p-2 space-y-0.5"
-          style={{ maxHeight: "280px" }}
-        >
-          {liveTimeline.slice(-100).map((r) => (
+        <div ref={logsRef} className="flex-1 overflow-y-auto p-2 space-y-0.5">
+          {liveTimeline.map((r) => (
             <div
               key={r.id}
-              className={`flex justify-between items-center px-3 py-1.5 rounded-lg text-xs font-mono ${
-                r.success
-                  ? "hover:bg-bg-700"
-                  : "bg-red-500/5 hover:bg-red-500/10"
+              onClick={() => setSelectedRequest(r)}
+              className={`flex items-center px-3 py-1.5 rounded-lg text-xs font-mono cursor-pointer transition-colors ${
+                selectedRequest?.id === r.id
+                  ? "bg-primary/10 border border-primary/30"
+                  : r.success
+                    ? "hover:bg-bg-700"
+                    : "bg-red-500/5 hover:bg-red-500/10"
               }`}
             >
               <span
-                className={`w-4 text-center ${r.success ? "text-success" : "text-danger"}`}
+                className={`w-4 text-center shrink-0 ${r.success ? "text-success" : "text-danger"}`}
               >
                 {r.success ? "✓" : "✗"}
               </span>
-              <span className="text-gray-400 w-6 text-center">#{r.id}</span>
+              <span className="text-gray-400 w-12 text-center shrink-0">
+                #{r.id}
+              </span>
               <span
-                className={`w-12 text-center font-semibold ${r.success ? "text-gray-300" : "text-red-400"}`}
+                className={`w-10 text-center font-semibold shrink-0 ${r.success ? "text-gray-300" : "text-red-400"}`}
               >
                 {r.status_code ?? "ERR"}
               </span>
+              <span className="text-gray-500 w-14 text-right shrink-0">
+                {r.response_size_bytes > 0
+                  ? `${(r.response_size_bytes / 1024).toFixed(1)}KB`
+                  : "—"}
+              </span>
               <span
-                className={`w-20 text-right ${
+                className={`w-20 text-right shrink-0 ${
                   r.latency_ms > 500
                     ? "text-red-400"
                     : r.latency_ms > 200
@@ -123,11 +159,13 @@ export function LiveMonitor() {
               >
                 {r.latency_ms.toFixed(1)}ms
               </span>
-              {r.error && (
-                <span className="text-red-400 text-xs truncate ml-2 flex-1">
-                  {r.error}
-                </span>
-              )}
+              <span className="text-gray-600 text-xs truncate ml-3 flex-1">
+                {r.error
+                  ? r.error
+                  : r.response_body
+                    ? r.response_body.substring(0, 80)
+                    : ""}
+              </span>
             </div>
           ))}
           {liveTimeline.length === 0 && isRunning && (
@@ -140,4 +178,13 @@ export function LiveMonitor() {
       </div>
     </div>
   );
+}
+
+/** Try to format JSON, fallback to raw string */
+function tryFormatJson(text: string): string {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
 }

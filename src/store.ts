@@ -30,6 +30,7 @@ export interface RequestResult {
   error: string | null;
   response_size_bytes: number;
   timestamp_ms: number;
+  response_body?: string | null;
 }
 
 export interface TestResult {
@@ -38,6 +39,7 @@ export interface TestResult {
   error_count: number;
   total_duration_ms: number;
   requests_per_second: number;
+  burst_dispatch_us: number;
   latency_min_ms: number;
   latency_max_ms: number;
   latency_avg_ms: number;
@@ -67,6 +69,12 @@ interface AppState {
   progress: number;
   currentResult: TestResult | null;
   liveTimeline: RequestResult[];
+  liveCounters: {
+    done: number;
+    success: number;
+    errors: number;
+    totalLatency: number;
+  };
   history: { config: TestConfig; result: TestResult; timestamp: string }[];
 
   // UI state
@@ -112,6 +120,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   progress: 0,
   currentResult: null,
   liveTimeline: [],
+  liveCounters: { done: 0, success: 0, errors: 0, totalLatency: 0 },
   history: [],
   activeTab: "test",
   curlImportText: "",
@@ -129,10 +138,21 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   addLiveResult: (r) =>
     set((s) => ({
-      liveTimeline: [...s.liveTimeline.slice(-200), r], // keep last 200
+      liveTimeline: [...s.liveTimeline.slice(-200), r],
+      liveCounters: {
+        done: s.liveCounters.done + 1,
+        success: s.liveCounters.success + (r.success ? 1 : 0),
+        errors: s.liveCounters.errors + (r.success ? 0 : 1),
+        totalLatency: s.liveCounters.totalLatency + r.latency_ms,
+      },
     })),
 
-  resetLive: () => set({ liveTimeline: [], progress: 0 }),
+  resetLive: () =>
+    set({
+      liveTimeline: [],
+      liveCounters: { done: 0, success: 0, errors: 0, totalLatency: 0 },
+      progress: 0,
+    }),
 
   setActiveTab: (activeTab) => set({ activeTab }),
 

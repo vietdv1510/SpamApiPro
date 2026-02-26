@@ -26,48 +26,70 @@ pub async fn run_load_test(
     Ok(result)
 }
 
+/// Tokenize curl command — respects single/double quoted strings
+fn tokenize_curl(cmd: &str) -> Vec<String> {
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut chars = cmd.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\'' if !in_double => { in_single = !in_single; }
+            '"' if !in_single => { in_double = !in_double; }
+            '\\' if !in_single && !in_double => {
+                if matches!(chars.peek(), Some('\n') | Some('\r')) { chars.next(); }
+            }
+            ' ' | '\t' | '\n' | '\r' if !in_single && !in_double => {
+                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
+            }
+            _ => { current.push(ch); }
+        }
+    }
+    if !current.is_empty() { tokens.push(current); }
+    tokens
+}
+
 /// Parse curl command thành TestConfig
 #[tauri::command]
 pub fn parse_curl(curl_command: String) -> Result<TestConfig, String> {
     let mut url = String::new();
     let mut method = "GET".to_string();
     let mut headers = std::collections::HashMap::new();
-    let mut body = None;
+    let mut body: Option<String> = None;
 
-    let parts: Vec<&str> = curl_command.split_whitespace().collect();
+    let tokens = tokenize_curl(&curl_command);
     let mut i = 0;
 
-    while i < parts.len() {
-        match parts[i] {
+    while i < tokens.len() {
+        let part = tokens[i].as_str();
+        match part {
             "curl" => {}
             "-X" | "--request" => {
                 i += 1;
-                if i < parts.len() {
-                    method = parts[i].to_uppercase();
-                }
+                if i < tokens.len() { method = tokens[i].to_uppercase(); }
             }
             "-H" | "--header" => {
                 i += 1;
-                if i < parts.len() {
-                    let header = parts[i].trim_matches('\'').trim_matches('"');
+                if i < tokens.len() {
+                    let header = &tokens[i];
                     if let Some(colon_pos) = header.find(':') {
-                        let key = header[..colon_pos].trim().to_string();
+                        let key = header[..colon_pos].trim().to_lowercase();
                         let value = header[colon_pos + 1..].trim().to_string();
                         headers.insert(key, value);
                     }
                 }
             }
-            "-d" | "--data" | "--data-raw" => {
+            "-d" | "--data" | "--data-raw" | "--data-binary" => {
                 i += 1;
-                if i < parts.len() {
-                    body = Some(parts[i].trim_matches('\'').trim_matches('"').to_string());
-                    if method == "GET" {
-                        method = "POST".to_string();
-                    }
+                if i < tokens.len() {
+                    body = Some(tokens[i].clone());
+                    if method == "GET" { method = "POST".to_string(); }
                 }
             }
-            p if p.starts_with("http://") || p.starts_with("https://") => {
-                url = p.trim_matches('\'').trim_matches('"').to_string();
+            p if (p.starts_with("http://") || p.starts_with("https://")) && url.is_empty() => {
+                url = p.to_string();
             }
             _ => {}
         }

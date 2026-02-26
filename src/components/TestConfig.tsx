@@ -1,13 +1,13 @@
-import { useRef, useEffect } from "react";
+import { useRef, useEffect, useState } from "react";
 import { useAppStore } from "../store";
 import { useTestRunner } from "../hooks/useTestRunner";
 
 const METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"] as const;
 const MODES = [
-  { value: "burst", label: "⚡ Burst", desc: "All at once" },
-  { value: "constant", label: "📊 Constant", desc: "Sustained load" },
-  { value: "ramp_up", label: "📈 Ramp Up", desc: "Gradual increase" },
-  { value: "stress_test", label: "💥 Stress", desc: "Find the limit" },
+  { value: "burst", label: "Burst", icon: "⚡", desc: "All at once" },
+  { value: "constant", label: "Constant", icon: "📊", desc: "Sustained" },
+  { value: "ramp_up", label: "Ramp Up", icon: "📈", desc: "Gradual" },
+  { value: "stress_test", label: "Stress", icon: "💥", desc: "Find limit" },
 ];
 
 export function TestConfig() {
@@ -26,10 +26,16 @@ export function TestConfig() {
   const { run, importCurl, error } = useTestRunner();
   const isRunning = runStatus === "running";
   const curlRef = useRef<HTMLTextAreaElement>(null);
+  const [editingUsers, setEditingUsers] = useState(false);
+  const [usersInput, setUsersInput] = useState(String(config.virtual_users));
 
   useEffect(() => {
     if (showCurlImport && curlRef.current) curlRef.current.focus();
   }, [showCurlImport]);
+
+  useEffect(() => {
+    if (!editingUsers) setUsersInput(String(config.virtual_users));
+  }, [config.virtual_users, editingUsers]);
 
   const handleHeaderChange = (
     index: number,
@@ -38,7 +44,6 @@ export function TestConfig() {
   ) => {
     const updated = [...headerRows];
     (updated[index] as any)[field] = value;
-    // Auto-add row when typing in last row
     if (index === headerRows.length - 1 && field !== "enabled" && value) {
       updated.push({ key: "", value: "", enabled: true });
     }
@@ -50,237 +55,371 @@ export function TestConfig() {
     setHeaderRows(headerRows.filter((_, i) => i !== index));
   };
 
+  const addHeader = () => {
+    const last = headerRows[headerRows.length - 1];
+    if (last && !last.key && !last.value) return;
+    setHeaderRows([...headerRows, { key: "", value: "", enabled: true }]);
+  };
+
   const handleCurlImport = async () => {
     const ok = await importCurl(curlImportText);
     if (!ok) alert("Could not parse curl command. Please check the format.");
   };
 
+  const commitUsersInput = () => {
+    const val = Math.max(1, Math.min(1_000_000, Number(usersInput) || 1));
+    setConfig({ virtual_users: val });
+    setUsersInput(String(val));
+    setEditingUsers(false);
+  };
+
   const methodColors: Record<string, string> = {
-    GET: "text-emerald-400",
-    POST: "text-blue-400",
-    PUT: "text-amber-400",
-    DELETE: "text-red-400",
-    PATCH: "text-purple-400",
+    GET: "#34d399",
+    POST: "#60a5fa",
+    PUT: "#fbbf24",
+    DELETE: "#f87171",
+    PATCH: "#a78bfa",
   };
 
   return (
-    <div className="flex flex-col gap-4 h-full overflow-y-auto pr-1">
-      {/* URL Bar */}
-      <div className="flex gap-2">
-        <select
-          value={config.method}
-          onChange={(e) => setConfig({ method: e.target.value as any })}
-          className={`bg-bg-700 border border-bg-500 rounded-lg px-3 py-2.5 text-sm font-semibold font-mono focus:outline-none focus:border-primary ${methodColors[config.method]} cursor-pointer`}
-          style={{ minWidth: "95px" }}
-        >
-          {METHODS.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
+    <div className="flex flex-col h-full min-w-0">
+      {/* ─── SCROLLABLE AREA: URL + Headers + Body ─── */}
+      <div className="flex-1 overflow-y-auto overflow-x-hidden pr-1 space-y-4 pb-3">
+        {/* URL Bar */}
+        <div className="flex gap-2 min-w-0">
+          <select
+            value={config.method}
+            onChange={(e) => setConfig({ method: e.target.value as any })}
+            className="bg-bg-700 border border-bg-500 rounded-lg px-2 py-2.5 text-xs font-semibold font-mono focus:outline-none focus:border-primary cursor-pointer shrink-0"
+            style={{ color: methodColors[config.method], width: "78px" }}
+          >
+            {METHODS.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
 
-        <input
-          type="url"
-          value={config.url}
-          onChange={(e) => setConfig({ url: e.target.value })}
-          placeholder="https://api.example.com/endpoint"
-          className="flex-1 bg-bg-700 border border-bg-500 rounded-lg px-4 py-2.5 text-sm font-mono focus:outline-none focus:glow-primary focus:border-primary transition-all placeholder-gray-600"
-        />
+          <input
+            type="url"
+            value={config.url}
+            onChange={(e) => setConfig({ url: e.target.value })}
+            placeholder="https://api.example.com/endpoint"
+            className="flex-1 min-w-0 bg-bg-700 border border-bg-500 rounded-lg px-3 py-2.5 text-xs font-mono focus:outline-none focus:border-primary transition-all placeholder-gray-600"
+          />
 
-        <button
-          onClick={() => setShowCurlImport(!showCurlImport)}
-          title="Import from cURL"
-          className="bg-bg-700 border border-bg-500 rounded-lg px-3 py-2.5 text-xs text-gray-400 hover:text-primary hover:border-primary transition-all"
-        >
-          curl
-        </button>
-      </div>
+          <button
+            onClick={() => setShowCurlImport(!showCurlImport)}
+            title="Import from cURL"
+            className="bg-bg-700 border border-bg-500 rounded-lg px-2 py-2.5 text-xs text-gray-400 hover:text-primary hover:border-primary transition-all shrink-0"
+          >
+            curl
+          </button>
+        </div>
 
-      {/* cURL Import */}
-      {showCurlImport && (
-        <div className="bg-bg-800 border border-bg-500 rounded-xl p-4 slide-in">
-          <p className="text-xs text-gray-400 mb-2 font-mono">
-            Paste your curl command:
-          </p>
-          <textarea
-            ref={curlRef}
-            value={curlImportText}
-            onChange={(e) => setCurlImportText(e.target.value)}
-            className="w-full bg-bg-700 border border-bg-600 rounded-lg p-3 text-xs font-mono text-gray-200 h-24 resize-none focus:outline-none focus:border-primary"
-            placeholder={`curl -X POST https://api.example.com \\
+        {/* cURL Import */}
+        {showCurlImport && (
+          <div className="bg-bg-800 border border-bg-500 rounded-xl p-4 slide-in">
+            <p className="text-xs text-gray-400 mb-2 font-mono">
+              Paste your curl command:
+            </p>
+            <textarea
+              ref={curlRef}
+              value={curlImportText}
+              onChange={(e) => setCurlImportText(e.target.value)}
+              className="w-full bg-bg-700 border border-bg-600 rounded-lg p-3 text-xs font-mono text-gray-200 h-24 resize-none focus:outline-none focus:border-primary"
+              placeholder={`curl -X POST https://api.example.com \\
   -H "Authorization: Bearer token" \\
   -d '{"key": "value"}'`}
-          />
-          <div className="flex justify-end gap-2 mt-2">
-            <button
-              onClick={() => setShowCurlImport(false)}
-              className="text-xs text-gray-500 hover:text-gray-300 px-3 py-1.5"
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCurlImport}
-              className="bg-primary/20 border border-primary/40 text-primary text-xs px-4 py-1.5 rounded-lg hover:bg-primary/30 transition-all"
-            >
-              Import →
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Headers */}
-      <div>
-        <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-2 font-semibold">
-          Headers
-        </h3>
-        <div className="space-y-1.5">
-          {headerRows.map((row, i) => (
-            <div key={i} className="flex gap-2 items-center">
-              <input
-                type="checkbox"
-                checked={row.enabled}
-                onChange={(e) =>
-                  handleHeaderChange(i, "enabled", e.target.checked)
-                }
-                className="accent-primary rounded"
-              />
-              <input
-                value={row.key}
-                onChange={(e) => handleHeaderChange(i, "key", e.target.value)}
-                placeholder="Header-Name"
-                className="flex-1 bg-bg-700 border border-bg-500 rounded px-3 py-2 text-xs font-mono focus:outline-none focus:border-primary/60 placeholder-gray-700"
-              />
-              <input
-                value={row.value}
-                onChange={(e) => handleHeaderChange(i, "value", e.target.value)}
-                placeholder="value"
-                className="flex-1 bg-bg-700 border border-bg-500 rounded px-3 py-2 text-xs font-mono focus:outline-none focus:border-primary/60 placeholder-gray-700"
-              />
+            />
+            <div className="flex justify-end gap-2 mt-2">
               <button
-                onClick={() => removeHeader(i)}
-                className="text-gray-700 hover:text-red-400 text-base w-5 text-center transition-colors"
+                onClick={() => setShowCurlImport(false)}
+                className="text-xs text-gray-500 hover:text-gray-300 px-3 py-1.5"
               >
-                ×
+                Cancel
+              </button>
+              <button
+                onClick={handleCurlImport}
+                className="bg-primary/20 border border-primary/40 text-primary text-xs px-4 py-1.5 rounded-lg hover:bg-primary/30 transition-all"
+              >
+                Import →
               </button>
             </div>
-          ))}
+          </div>
+        )}
+
+        {/* Headers */}
+        <div className="min-w-0">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
+              Headers
+            </h3>
+            <button
+              onClick={addHeader}
+              className="text-xs text-gray-600 hover:text-primary transition-colors px-1.5 py-0.5 rounded hover:bg-primary/10"
+              title="Add header"
+            >
+              + Add
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            {headerRows.map((row, i) => (
+              <div key={i} className="flex gap-1.5 items-center min-w-0">
+                {/* Custom checkbox */}
+                <label className="custom-checkbox shrink-0">
+                  <input
+                    type="checkbox"
+                    checked={row.enabled}
+                    onChange={(e) =>
+                      handleHeaderChange(i, "enabled", e.target.checked)
+                    }
+                  />
+                  <span className="checkmark" />
+                </label>
+                <input
+                  value={row.key}
+                  onChange={(e) => handleHeaderChange(i, "key", e.target.value)}
+                  placeholder="Key"
+                  className={`min-w-0 bg-bg-700 border border-bg-500 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-primary/60 placeholder-gray-700 transition-opacity ${
+                    !row.enabled ? "opacity-40" : ""
+                  }`}
+                  style={{ flex: "0 1 120px" }}
+                  disabled={!row.enabled}
+                />
+                <input
+                  value={row.value}
+                  onChange={(e) =>
+                    handleHeaderChange(i, "value", e.target.value)
+                  }
+                  placeholder="Value"
+                  className={`flex-1 min-w-0 bg-bg-700 border border-bg-500 rounded px-2 py-1.5 text-xs font-mono focus:outline-none focus:border-primary/60 placeholder-gray-700 transition-opacity ${
+                    !row.enabled ? "opacity-40" : ""
+                  }`}
+                  disabled={!row.enabled}
+                />
+                <button
+                  onClick={() => removeHeader(i)}
+                  className="text-gray-700 hover:text-red-400 text-sm w-4 text-center transition-colors shrink-0"
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
+
+        {/* Body */}
+        {["POST", "PUT", "PATCH"].includes(config.method) && (
+          <div>
+            <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-2 font-semibold">
+              Request Body
+            </h3>
+            <textarea
+              value={config.body || ""}
+              onChange={(e) => setConfig({ body: e.target.value || null })}
+              placeholder={'{\n  "key": "value"\n}'}
+              className="w-full bg-bg-700 border border-bg-500 rounded-xl px-4 py-3 text-xs font-mono text-gray-200 h-28 resize-none focus:outline-none focus:border-primary/60 placeholder-gray-700"
+            />
+          </div>
+        )}
       </div>
 
-      {/* Body */}
-      {["POST", "PUT", "PATCH"].includes(config.method) && (
-        <div>
-          <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-2 font-semibold">
-            Request Body
-          </h3>
-          <textarea
-            value={config.body || ""}
-            onChange={(e) => setConfig({ body: e.target.value || null })}
-            placeholder={'{\n  "key": "value"\n}'}
-            className="w-full bg-bg-700 border border-bg-500 rounded-xl px-4 py-3 text-xs font-mono text-gray-200 h-32 resize-none focus:outline-none focus:border-primary/60 placeholder-gray-700"
-          />
-        </div>
-      )}
+      {/* ─── PINNED BOTTOM: Settings + Mode + Button ─── */}
+      <div className="shrink-0 border-t border-bg-700 pt-3 space-y-3">
+        {/* Load Settings — stacked layout to avoid cramped cards */}
+        <div className="space-y-2">
+          {/* Requests */}
+          <div
+            className={`bg-bg-700 rounded-xl p-3 border transition-colors ${
+              config.virtual_users > 100000
+                ? "border-red-500/50"
+                : config.virtual_users > 10000
+                  ? "border-amber-500/40"
+                  : "border-bg-500"
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <label className="text-xs text-gray-500 font-medium">
+                Requests
+              </label>
+              {editingUsers ? (
+                <input
+                  type="number"
+                  value={usersInput}
+                  onChange={(e) => setUsersInput(e.target.value)}
+                  onBlur={commitUsersInput}
+                  onKeyDown={(e) => e.key === "Enter" && commitUsersInput()}
+                  autoFocus
+                  min={1}
+                  max={1000000}
+                  className="w-20 bg-bg-600 border border-primary rounded px-1.5 py-0.5 text-primary font-mono font-bold text-sm text-center focus:outline-none"
+                />
+              ) : (
+                <span
+                  onClick={() => setEditingUsers(true)}
+                  className={`font-mono font-bold text-sm cursor-pointer hover:underline tabular-nums ${
+                    config.virtual_users > 100000
+                      ? "text-red-400"
+                      : config.virtual_users > 10000
+                        ? "text-amber-400"
+                        : "text-primary"
+                  }`}
+                  title="Click to edit — type any value up to 1,000,000"
+                >
+                  {config.virtual_users.toLocaleString()}
+                </span>
+              )}
+            </div>
+            <input
+              type="range"
+              min="0"
+              max="100000"
+              step={
+                config.virtual_users <= 100
+                  ? 1
+                  : config.virtual_users <= 1000
+                    ? 10
+                    : config.virtual_users <= 10000
+                      ? 100
+                      : 1000
+              }
+              value={config.virtual_users}
+              onChange={(e) => {
+                const v = Number(e.target.value);
+                setConfig({ virtual_users: Math.max(1, v) });
+              }}
+              className="w-full custom-range"
+            />
+            {/* Quick presets */}
+            <div className="flex gap-1 mt-2">
+              {[100, 500, 1000, 5000, 10000, 50000, 100000].map((v) => (
+                <button
+                  key={v}
+                  onClick={() => setConfig({ virtual_users: v })}
+                  className={`flex-1 text-[10px] py-0.5 rounded font-mono transition-all ${
+                    config.virtual_users === v
+                      ? "bg-primary/20 text-primary border border-primary/40"
+                      : "bg-bg-600 text-gray-600 border border-transparent hover:text-gray-400"
+                  }`}
+                >
+                  {v >= 1000 ? `${v / 1000}K` : v}
+                </button>
+              ))}
+            </div>
+            {/* Warnings */}
+            {config.virtual_users > 100000 && (
+              <div className="mt-2 text-[10px] text-red-400 bg-red-500/10 rounded px-2 py-1">
+                ⚠️ {">"}100K — Risk of OOM. ~
+                {((config.virtual_users * 500) / 1024 / 1024).toFixed(0)}MB for
+                results + task overhead. IPC will serialize{" "}
+                {config.virtual_users.toLocaleString()} results to JSON —
+                frontend may freeze.
+              </div>
+            )}
+            {config.virtual_users > 10000 && config.virtual_users <= 100000 && (
+              <div className="mt-2 text-[10px] text-amber-400 bg-amber-500/10 rounded px-2 py-1">
+                ⚡ Heavy load — ~
+                {((config.virtual_users * 500) / 1024 / 1024).toFixed(0)}MB
+                estimated RAM.{" "}
+                {config.virtual_users > 50000
+                  ? "Results transfer may cause brief UI lag."
+                  : "Ensure target server can handle the concurrency."}
+              </div>
+            )}
+          </div>
 
-      {/* Test Settings */}
-      <div>
-        <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-3 font-semibold">
-          Load Settings
-        </h3>
-        <div className="grid grid-cols-2 gap-3">
+          {/* Timeout */}
           <div className="bg-bg-700 rounded-xl p-3 border border-bg-500">
-            <label className="text-xs text-gray-500 mb-1 block">
-              Virtual Users
+            <label className="text-xs text-gray-500 font-medium block mb-1">
+              Timeout (ms)
             </label>
             <div className="flex items-center gap-2">
               <input
-                type="range"
-                min="1"
-                max="1000"
-                value={config.virtual_users}
+                type="number"
+                value={config.timeout_ms}
                 onChange={(e) =>
-                  setConfig({ virtual_users: Number(e.target.value) })
+                  setConfig({ timeout_ms: Number(e.target.value) })
                 }
-                className="flex-1 accent-primary"
+                min={100}
+                max={120000}
+                step={100}
+                className="flex-1 bg-bg-600 border border-bg-500 rounded-lg px-3 py-1.5 text-primary font-mono font-bold text-sm focus:outline-none focus:border-primary/60"
               />
-              <span className="text-primary font-mono font-bold text-sm w-12 text-right">
-                {config.virtual_users}
-              </span>
+              {/* Quick presets */}
+              <div className="flex gap-1">
+                {[5000, 10000, 30000].map((v) => (
+                  <button
+                    key={v}
+                    onClick={() => setConfig({ timeout_ms: v })}
+                    className={`text-[10px] px-2 py-1 rounded font-mono transition-all ${
+                      config.timeout_ms === v
+                        ? "bg-primary/20 text-primary border border-primary/40"
+                        : "bg-bg-600 text-gray-600 border border-transparent hover:text-gray-400"
+                    }`}
+                  >
+                    {v / 1000}s
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-          <div className="bg-bg-700 rounded-xl p-3 border border-bg-500">
-            <label className="text-xs text-gray-500 mb-1 block">
-              Timeout (ms)
-            </label>
-            <input
-              type="number"
-              value={config.timeout_ms}
-              onChange={(e) =>
-                setConfig({ timeout_ms: Number(e.target.value) })
-              }
-              className="w-full bg-transparent text-primary font-mono font-bold text-sm focus:outline-none"
-            />
-          </div>
         </div>
-      </div>
 
-      {/* Mode Selector */}
-      <div>
-        <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-2 font-semibold">
-          Test Mode
-        </h3>
-        <div className="grid grid-cols-2 gap-2">
+        {/* Mode Selector */}
+        <div className="grid grid-cols-4 gap-1.5">
           {MODES.map((m) => (
             <button
               key={m.value}
               onClick={() => setConfig({ mode: m.value as any })}
-              className={`p-3 rounded-xl border text-left transition-all ${
+              className={`p-2 rounded-lg border text-center transition-all ${
                 config.mode === m.value
-                  ? "border-primary bg-primary/10 glow-primary"
+                  ? "border-primary bg-primary/10"
                   : "border-bg-500 bg-bg-700 hover:border-bg-400"
               }`}
             >
-              <div className="text-sm font-semibold">{m.label}</div>
-              <div className="text-xs text-gray-500">{m.desc}</div>
+              <div className="text-sm leading-none">{m.icon}</div>
+              <div className="text-[10px] font-semibold mt-1 truncate">
+                {m.label}
+              </div>
             </button>
           ))}
         </div>
-      </div>
 
-      {error && (
-        <div className="bg-red-500/10 border border-red-500/40 rounded-xl px-4 py-3 text-red-400 text-sm">
-          ⚠️ {error}
-        </div>
-      )}
-
-      {/* Run Button */}
-      <button
-        onClick={run}
-        disabled={isRunning || !config.url}
-        className={`w-full py-4 rounded-2xl font-bold text-base transition-all ${
-          isRunning
-            ? "bg-bg-600 text-gray-500 cursor-not-allowed"
-            : "bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 active:scale-95 shadow-lg"
-        }`}
-        style={
-          isRunning
-            ? {}
-            : {
-                boxShadow:
-                  "0 0 30px rgba(0,212,255,0.3), 0 0 60px rgba(124,58,237,0.2)",
-              }
-        }
-      >
-        {isRunning ? (
-          <span className="flex items-center justify-center gap-2">
-            <span className="w-4 h-4 border-2 border-gray-500 border-t-gray-300 rounded-full animate-spin" />
-            Running...
-          </span>
-        ) : (
-          `🚀 Fire ${config.virtual_users} Requests`
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/40 rounded-xl px-3 py-2 text-red-400 text-xs">
+            ⚠️ {error}
+          </div>
         )}
-      </button>
+
+        {/* Run Button */}
+        <button
+          onClick={run}
+          disabled={isRunning || !config.url}
+          className={`w-full py-3 rounded-2xl font-bold text-sm transition-all ${
+            isRunning
+              ? "bg-bg-600 text-gray-500 cursor-not-allowed"
+              : "bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 active:scale-95 shadow-lg"
+          }`}
+          style={
+            isRunning
+              ? {}
+              : {
+                  boxShadow:
+                    "0 0 30px rgba(0,212,255,0.3), 0 0 60px rgba(124,58,237,0.2)",
+                }
+          }
+        >
+          {isRunning ? (
+            <span className="flex items-center justify-center gap-2">
+              <span className="w-4 h-4 border-2 border-gray-500 border-t-gray-300 rounded-full animate-spin" />
+              Running...
+            </span>
+          ) : (
+            `🚀 Fire ${config.virtual_users.toLocaleString()} Requests`
+          )}
+        </button>
+      </div>
     </div>
   );
 }

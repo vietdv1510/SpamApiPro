@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState, useRef, useCallback } from "react";
 import { TestConfig } from "./components/TestConfig";
 import { LiveMonitor } from "./components/LiveMonitor";
 import { ResultsDashboard } from "./components/ResultsDashboard";
@@ -11,9 +11,52 @@ const TABS = [
   { id: "history", label: "📋 History", desc: "Past Runs" },
 ] as const;
 
+const MIN_PANEL_WIDTH = 280;
+const MAX_PANEL_WIDTH = 600;
+const DEFAULT_PANEL_WIDTH = 340;
+
 function App() {
   const { activeTab, setActiveTab, runStatus, currentResult, history } =
     useAppStore();
+
+  // ─── Resizable left panel ───
+  const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
+  const isDragging = useRef(false);
+  const startX = useRef(0);
+  const startWidth = useRef(0);
+
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      isDragging.current = true;
+      startX.current = e.clientX;
+      startWidth.current = panelWidth;
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const onMouseMove = (ev: MouseEvent) => {
+        if (!isDragging.current) return;
+        const delta = ev.clientX - startX.current;
+        const newWidth = Math.max(
+          MIN_PANEL_WIDTH,
+          Math.min(MAX_PANEL_WIDTH, startWidth.current + delta),
+        );
+        setPanelWidth(newWidth);
+      };
+
+      const onMouseUp = () => {
+        isDragging.current = false;
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+      };
+
+      document.addEventListener("mousemove", onMouseMove);
+      document.addEventListener("mouseup", onMouseUp);
+    },
+    [panelWidth],
+  );
 
   return (
     <div className="flex flex-col h-screen bg-bg-900 text-gray-100 select-none">
@@ -57,17 +100,36 @@ function App() {
         </div>
       </div>
 
-      {/* Main Layout: Left Panel (Config) + Right Panel (Monitor/Results) */}
+      {/* Main Layout: Resizable Left Panel + Right Panel */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: Test Config (always visible) */}
-        <div className="w-96 border-r border-bg-700 flex flex-col overflow-hidden">
-          <div className="px-4 py-3 border-b border-bg-700">
+        {/* Left: Test Config (resizable) */}
+        <div
+          className="flex-shrink-0 border-r border-bg-700 flex flex-col overflow-hidden"
+          style={{ width: `${panelWidth}px`, minWidth: `${MIN_PANEL_WIDTH}px` }}
+        >
+          <div className="px-4 py-3 border-b border-bg-700 flex items-center justify-between">
             <h2 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
               Configure
             </h2>
+            <span className="text-[10px] text-gray-700 font-mono">
+              {panelWidth}px
+            </span>
           </div>
-          <div className="flex-1 overflow-hidden p-4">
+          <div className="flex-1 overflow-hidden p-3">
             <TestConfig />
+          </div>
+        </div>
+
+        {/* Resize Handle */}
+        <div
+          className="resize-handle"
+          onMouseDown={handleMouseDown}
+          title="Drag to resize"
+        >
+          <div className="resize-handle-dots">
+            <span />
+            <span />
+            <span />
           </div>
         </div>
 

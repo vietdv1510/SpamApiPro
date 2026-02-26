@@ -43,11 +43,7 @@
   },
   "plugins": {
     "shell": {
-      "all": true,
       "open": true
-    },
-    "fs": {
-      "all": true
     }
   }
 }

@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Barrier;
@@ -11,24 +11,24 @@ use parking_lot::Mutex;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TestConfig {
     pub url: String,
-    pub method: String,                          // GET, POST, PUT, DELETE, PATCH
+    pub method: String,
     pub headers: HashMap<String, String>,
     pub body: Option<String>,
-    pub virtual_users: u32,                      // số concurrent requests
-    pub duration_secs: Option<u32>,             // chạy trong bao lâu (nếu có)
-    pub iterations: Option<u32>,                 // hoặc bao nhiêu lần
+    pub virtual_users: u32,
+    pub duration_secs: Option<u32>,
+    pub iterations: Option<u32>,
     pub mode: TestMode,
     pub timeout_ms: u64,
-    pub think_time_ms: u64,                     // thời gian nghỉ giữa các iteration
+    pub think_time_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum TestMode {
-    Burst,          // Bắn TẤT CẢ cùng đúng 1 thời điểm (Rendezvous)
-    Constant,       // Giữ N users liên tục
-    RampUp,         // Tăng dần từ 0 đến N users
-    StressTest,     // Tìm điểm gãy của server
+    Burst,
+    Constant,
+    RampUp,
+    StressTest,
 }
 
 /// Kết quả của 1 request đơn lẻ
@@ -41,7 +41,7 @@ pub struct RequestResult {
     pub error: Option<String>,
     pub response_size_bytes: usize,
     pub timestamp_ms: u64,
-    pub response_body: Option<String>, // chỉ lưu khi cần race detection
+    pub response_body: Option<String>, // chỉ giữ preview 512 bytes cho race detection
 }
 
 /// Kết quả tổng hợp toàn bộ test
@@ -52,7 +52,9 @@ pub struct TestResult {
     pub error_count: u64,
     pub total_duration_ms: f64,
     pub requests_per_second: f64,
-    // Latency
+    pub burst_dispatch_us: f64,
+    pub warmup_time_ms: f64,
+    // Latency percentiles
     pub latency_min_ms: f64,
     pub latency_max_ms: f64,
     pub latency_avg_ms: f64,
@@ -64,30 +66,18 @@ pub struct TestResult {
     // Race condition analysis
     pub race_conditions_detected: u32,
     pub unique_responses: u32,
-    pub response_consistency: f64, // 0-100%
-    // Errors breakdown
+    pub response_consistency: f64,
+    // Breakdowns
     pub error_types: HashMap<String, u32>,
-    // Raw results for chart
     pub timeline: Vec<RequestResult>,
     pub status_distribution: HashMap<String, u32>,
 }
 
-/// State counter dùng atomic để đếm không cần mutex
-pub struct AtomicCounters {
-    pub success: AtomicU64,
-    pub errors: AtomicU64,
-    pub total_latency_us: AtomicU64, // microseconds để tránh float issues
-}
+/// Max bytes giữ lại từ response body cho race detection
+const BODY_PREVIEW_BYTES: usize = 512;
 
-impl AtomicCounters {
-    pub fn new() -> Self {
-        Self {
-            success: AtomicU64::new(0),
-            errors: AtomicU64::new(0),
-            total_latency_us: AtomicU64::new(0),
-        }
-    }
-}
+/// Max connections warm up (match pool_max_idle_per_host)
+const MAX_WARMUP_CONNECTIONS: usize = 1000;
 
 /// Engine chính — chạy load test
 pub struct LoadTestEngine {
@@ -98,105 +88,82 @@ impl LoadTestEngine {
     pub fn new(timeout_ms: u64) -> Self {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(timeout_ms))
+            .connect_timeout(Duration::from_secs(10))
             .connection_verbose(false)
-            .pool_max_idle_per_host(500)      // connection pooling tích cực
+            // Connection pooling
+            .pool_max_idle_per_host(MAX_WARMUP_CONNECTIONS)
+            .pool_idle_timeout(Duration::from_secs(90))
+            // TCP tuning
             .tcp_keepalive(Duration::from_secs(30))
-            .http2_prior_knowledge()           // ưu tiên HTTP/2
+            .tcp_nodelay(true)
+            // TLS
+            .danger_accept_invalid_certs(true)
+            .use_rustls_tls()
+            // Headers
+            .user_agent("SpamAPI-Pro/1.0 (Rust/Tokio)")
             .build()
             .expect("Failed to build HTTP client");
 
         Self { client }
     }
 
-    /// Bắn 1 request và đo latency
-    async fn fire_single_request(
-        &self,
-        config: &TestConfig,
-        request_id: u32,
-    ) -> RequestResult {
+    /// 🔥 Warm up connections — tạo sẵn TCP+TLS connections trong pool
+    /// Returns (elapsed_time, success_count) — không fail silently
+    async fn warm_up_connections(&self, url: &str, count: usize) -> (Duration, usize) {
         let start = Instant::now();
-        let now_epoch = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis() as u64;
+        let success = Arc::new(AtomicU32::new(0));
+        let mut handles = Vec::with_capacity(count);
 
-        let mut req = match config.method.to_uppercase().as_str() {
-            "GET"    => self.client.get(&config.url),
-            "POST"   => self.client.post(&config.url),
-            "PUT"    => self.client.put(&config.url),
-            "DELETE" => self.client.delete(&config.url),
-            "PATCH"  => self.client.patch(&config.url),
-            _        => self.client.get(&config.url),
-        };
-
-        // Gắn headers
-        for (key, value) in &config.headers {
-            req = req.header(key, value);
-        }
-
-        // Gắn body nếu có
-        if let Some(body) = &config.body {
-            req = req.body(body.clone());
-        }
-
-        match req.send().await {
-            Ok(response) => {
-                let status = response.status().as_u16();
-                let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
-                let response_size = response.content_length().unwrap_or(0) as usize;
-                // Đọc body để detect race condition
-                let body_text = response.text().await.unwrap_or_default();
-                let success = status >= 200 && status < 300;
-
-                RequestResult {
-                    id: request_id,
-                    success,
-                    status_code: Some(status),
-                    latency_ms,
-                    error: if success { None } else { Some(format!("HTTP {}", status)) },
-                    response_size_bytes: response_size.max(body_text.len()),
-                    timestamp_ms: now_epoch,
-                    response_body: Some(body_text),
+        for _ in 0..count {
+            let client = self.client.clone();
+            let url = url.to_string();
+            let success = Arc::clone(&success);
+            handles.push(tokio::spawn(async move {
+                if client.head(&url).send().await.is_ok() {
+                    success.fetch_add(1, Ordering::Relaxed);
                 }
-            }
-            Err(e) => {
-                let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
-                let error_msg = if e.is_timeout() {
-                    "Timeout".to_string()
-                } else if e.is_connect() {
-                    "Connection refused".to_string()
-                } else {
-                    e.to_string()
-                };
-
-                RequestResult {
-                    id: request_id,
-                    success: false,
-                    status_code: None,
-                    latency_ms,
-                    error: Some(error_msg),
-                    response_size_bytes: 0,
-                    timestamp_ms: now_epoch,
-                    response_body: None,
-                }
-            }
+            }));
         }
+
+        for handle in handles {
+            let _ = handle.await;
+        }
+
+        (start.elapsed(), success.load(Ordering::Relaxed) as usize)
     }
 
     /// ⭐ BURST MODE: Tất cả requests hội tụ tại 1 điểm rồi bắn đồng loạt
+    /// Pattern: Warm up → Pre-build → Barrier → Execute → Receive
     pub async fn run_burst(
         &self,
         config: TestConfig,
         progress_callback: impl Fn(f32, RequestResult) + Send + Sync + 'static,
     ) -> TestResult {
         let n = config.virtual_users as usize;
-        let barrier = Arc::new(Barrier::new(n));  // Rendezvous point
+
+        // ── PHASE 1: WARM UP ──────────────────────────────────
+        // Cap ở pool_max_idle_per_host — warm hơn cũng bị pool drop
+        let warmup_count = n.min(MAX_WARMUP_CONNECTIONS);
+        let (warmup_time, warmup_ok) = self.warm_up_connections(&config.url, warmup_count).await;
+        eprintln!("🔥 Warmed up {}/{} connections in {:?}", warmup_ok, warmup_count, warmup_time);
+        if warmup_ok < warmup_count / 2 {
+            eprintln!("⚠️  >50% warm up failed — server có thể block HEAD requests");
+        }
+
+        // ── PHASE 2: BURST ────────────────────────────────────
+        let barrier = Arc::new(Barrier::new(n));
         let results = Arc::new(Mutex::new(Vec::with_capacity(n)));
         let callback = Arc::new(progress_callback);
 
+        // Lock-free dispatch times — mỗi task ghi vào slot riêng, ZERO contention
+        let dispatch_nanos: Arc<Vec<AtomicU64>> = Arc::new(
+            (0..n).map(|_| AtomicU64::new(0)).collect()
+        );
+        // Atomic counter — progress theo thứ tự hoàn thành thực tế
+        let completed = Arc::new(AtomicU32::new(0));
+
         let global_start = Instant::now();
         let config = Arc::new(config);
-
         let mut handles = Vec::with_capacity(n);
 
         for i in 0..n {
@@ -205,16 +172,96 @@ impl LoadTestEngine {
             let config = Arc::clone(&config);
             let client = self.client.clone();
             let callback = Arc::clone(&callback);
+            let dispatch_nanos = Arc::clone(&dispatch_nanos);
+            let completed = Arc::clone(&completed);
+            let global_start = global_start;
 
             let handle = tokio::spawn(async move {
-                // Tất cả goroutine đợi nhau tại điểm này
+                // 🏗️ PRE-BUILD request TRƯỚC barrier — zero work sau barrier
+                let mut builder = match config.method.to_uppercase().as_str() {
+                    "GET"    => client.get(&config.url),
+                    "POST"   => client.post(&config.url),
+                    "PUT"    => client.put(&config.url),
+                    "DELETE" => client.delete(&config.url),
+                    "PATCH"  => client.patch(&config.url),
+                    _        => client.get(&config.url),
+                };
+                for (key, value) in &config.headers {
+                    builder = builder.header(key, value);
+                }
+                if let Some(body) = &config.body {
+                    builder = builder.body(body.clone());
+                }
+                let request = builder.build().expect("Failed to build request");
+
+                // ⏳ Barrier — tất cả tasks đợi nhau
                 barrier.wait().await;
 
-                // Tất cả cùng fire!
-                let engine = LoadTestEngine { client };
-                let result = engine.fire_single_request(&config, i as u32).await;
+                // ⚡ SAU barrier — chỉ execute + ghi timestamp lock-free
+                let fired_at_ns = global_start.elapsed().as_nanos() as u64;
+                dispatch_nanos[i].store(fired_at_ns, Ordering::Relaxed);
 
-                let progress = (i + 1) as f32 / n as f32 * 100.0;
+                let start = Instant::now();
+                let now_epoch = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+
+                let result = match client.execute(request).await {
+                    Ok(response) => {
+                        let status = response.status().as_u16();
+                        let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+
+                        // Đọc body nhưng CHỈ GIỮ preview — không ăn RAM
+                        let body_bytes = response.bytes().await.unwrap_or_default();
+                        let response_size = body_bytes.len();
+                        let body_preview = if body_bytes.is_empty() {
+                            None
+                        } else {
+                            let cap = body_bytes.len().min(BODY_PREVIEW_BYTES);
+                            Some(String::from_utf8_lossy(&body_bytes[..cap]).into_owned())
+                        };
+                        // body_bytes dropped ở đây — full body KHÔNG giữ trong RAM
+
+                        let success = status >= 200 && status < 300;
+
+                        RequestResult {
+                            id: i as u32,
+                            success,
+                            status_code: Some(status),
+                            latency_ms,
+                            error: if success { None } else { Some(format!("HTTP {}", status)) },
+                            response_size_bytes: response_size,
+                            timestamp_ms: now_epoch,
+                            response_body: body_preview,
+                        }
+                    }
+                    Err(e) => {
+                        let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+                        let error_msg = if e.is_timeout() {
+                            "Timeout".to_string()
+                        } else if e.is_connect() {
+                            "Connection refused".to_string()
+                        } else {
+                            e.to_string()
+                        };
+
+                        RequestResult {
+                            id: i as u32,
+                            success: false,
+                            status_code: None,
+                            latency_ms,
+                            error: Some(error_msg),
+                            response_size_bytes: 0,
+                            timestamp_ms: now_epoch,
+                            response_body: None,
+                        }
+                    }
+                };
+
+                // 📊 Progress — thứ tự hoàn thành THỰC TẾ, không phải index spawn
+                let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                let progress = done as f32 / n as f32 * 100.0;
                 callback(progress, result.clone());
                 results.lock().push(result);
             });
@@ -222,7 +269,6 @@ impl LoadTestEngine {
             handles.push(handle);
         }
 
-        // Đợi tất cả xong
         for handle in handles {
             let _ = handle.await;
         }
@@ -230,7 +276,24 @@ impl LoadTestEngine {
         let total_duration_ms = global_start.elapsed().as_secs_f64() * 1000.0;
         let raw_results = Arc::try_unwrap(results).unwrap().into_inner();
 
-        self.aggregate_results(raw_results, total_duration_ms)
+        // Tính dispatch spread từ lock-free array — chính xác, không bị mutex phình
+        let dispatch_nanos = Arc::try_unwrap(dispatch_nanos).unwrap();
+        let nanos: Vec<u64> = dispatch_nanos.iter()
+            .map(|a| a.load(Ordering::Relaxed))
+            .filter(|&v| v > 0)
+            .collect();
+        let dispatch_us = if nanos.len() >= 2 {
+            let min_t = nanos.iter().min().unwrap();
+            let max_t = nanos.iter().max().unwrap();
+            (max_t - min_t) as f64 / 1000.0 // nanos → micros
+        } else {
+            0.0
+        };
+
+        let mut result = self.aggregate_results(raw_results, total_duration_ms);
+        result.burst_dispatch_us = dispatch_us;
+        result.warmup_time_ms = warmup_time.as_secs_f64() * 1000.0;
+        result
     }
 
     /// Tính toán tổng hợp metrics từ raw results
@@ -241,10 +304,12 @@ impl LoadTestEngine {
         let mut error_count = 0u64;
         let mut error_types: HashMap<String, u32> = HashMap::new();
         let mut status_distribution: HashMap<String, u32> = HashMap::new();
-        let mut response_bodies: Vec<String> = Vec::new();
         let mut min_latency = f64::MAX;
         let mut max_latency = 0.0f64;
         let mut total_latency = 0.0f64;
+
+        // Race detection — hash trực tiếp, KHÔNG clone body strings
+        let mut unique_bodies: std::collections::HashSet<String> = std::collections::HashSet::new();
 
         for r in &results {
             let latency_us = (r.latency_ms * 1000.0) as u64;
@@ -267,32 +332,29 @@ impl LoadTestEngine {
                 *status_distribution.entry(key).or_insert(0) += 1;
             }
 
+            // Body đã truncated ở BODY_PREVIEW_BYTES — so sánh nhẹ nhàng
             if let Some(body) = &r.response_body {
                 if !body.is_empty() {
-                    response_bodies.push(body.clone());
+                    let trimmed: String = body.chars().take(200).collect();
+                    unique_bodies.insert(trimmed);
                 }
             }
         }
 
-        // Race condition detection: đếm số unique response bodies
-        let mut unique_responses_set: std::collections::HashSet<String> = std::collections::HashSet::new();
-        for body in &response_bodies {
-            // Chỉ so sánh 200 ký tự đầu để tránh noise
-            let trimmed = body.chars().take(200).collect::<String>();
-            unique_responses_set.insert(trimmed);
-        }
-
-        let unique_responses = unique_responses_set.len() as u32;
+        let unique_responses = unique_bodies.len() as u32;
+        let body_count = results.iter().filter(|r| r.response_body.as_ref().map_or(false, |b| !b.is_empty())).count();
         let race_detected = if unique_responses > 1 { unique_responses - 1 } else { 0 };
-        let consistency = if response_bodies.is_empty() {
+        let consistency = if body_count == 0 {
             100.0
         } else {
-            (response_bodies.len() as f64 - race_detected as f64) / response_bodies.len() as f64 * 100.0
+            (body_count as f64 - race_detected as f64) / body_count as f64 * 100.0
         };
 
         let us_to_ms = |us: u64| us as f64 / 1000.0;
 
         TestResult {
+            burst_dispatch_us: 0.0,
+            warmup_time_ms: 0.0,
             total_requests: total,
             success_count,
             error_count,
