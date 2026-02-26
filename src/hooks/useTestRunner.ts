@@ -1,27 +1,30 @@
-import { useState, useCallback } from "react";
+import { useCallback } from "react";
 import { useAppStore } from "../store";
-import { runLoadTest, parseCurl } from "../tauri";
+import { runLoadTest, parseCurl, stopTest } from "../tauri";
+
+/** Validate URL format */
+function isValidUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
 
 export function useTestRunner() {
-  const {
-    config,
-    getEffectiveHeaders,
-    setRunStatus,
-    setProgress,
-    setCurrentResult,
-    addLiveResult,
-    resetLive,
-    addToHistory,
-    setActiveTab,
-  } = useAppStore();
-
-  const [error, setError] = useState<string | null>(null);
-
   const run = useCallback(async () => {
-    setError(null);
-    resetLive();
-    setRunStatus("running");
-    setCurrentResult(null);
+    const state = useAppStore.getState();
+    const { config, getEffectiveHeaders } = state;
+
+    if (!isValidUrl(config.url)) {
+      useAppStore.setState({ runStatus: "error" });
+      return { error: "Invalid URL — must start with http:// or https://" };
+    }
+
+    useAppStore.setState({ runStatus: "running" });
+    state.resetLive();
+    state.setCurrentResult(null);
 
     const effectiveConfig = {
       ...config,
@@ -30,24 +33,32 @@ export function useTestRunner() {
     };
 
     try {
-      const result = await runLoadTest(
-        effectiveConfig,
-        (progress, reqResult) => {
-          setProgress(progress);
-          addLiveResult(reqResult);
-        },
-      );
+      const result = await runLoadTest(effectiveConfig, (progress, batch) => {
+        useAppStore.getState().setProgress(progress);
+        useAppStore.getState().addLiveResults(batch);
+      });
 
-      setCurrentResult(result);
-      addToHistory(effectiveConfig, result);
-      setRunStatus("completed");
-      setActiveTab("results");
+      useAppStore.getState().setCurrentResult(result);
+      useAppStore.getState().addToHistory(effectiveConfig, result);
+      useAppStore.setState({
+        runStatus: result.was_cancelled ? "cancelled" : "completed",
+        activeTab: "results",
+      });
+      return { error: null };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      setRunStatus("error");
+      useAppStore.setState({ runStatus: "error" });
+      return { error: msg };
     }
-  }, [config, getEffectiveHeaders]);
+  }, []);
+
+  const stop = useCallback(async () => {
+    try {
+      await stopTest();
+    } catch {
+      // Test may have already finished
+    }
+  }, []);
 
   const importCurl = useCallback(async (curlText: string) => {
     try {
@@ -59,5 +70,5 @@ export function useTestRunner() {
     }
   }, []);
 
-  return { run, importCurl, error };
+  return { run, stop, importCurl };
 }

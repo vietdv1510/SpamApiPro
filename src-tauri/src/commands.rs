@@ -1,18 +1,41 @@
 use crate::engine::{LoadTestEngine, TestConfig, TestResult};
-use tauri::{AppHandle, Emitter};
+use parking_lot::Mutex;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, State};
+use tokio_util::sync::CancellationToken;
 
-/// Command chạy load test — được gọi từ Frontend
+/// Shared application state — quản lý cancel token
+pub struct AppState {
+    pub cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+}
+
+impl AppState {
+    pub fn new() -> Self {
+        Self {
+            cancel_token: Arc::new(Mutex::new(None)),
+        }
+    }
+}
+
+/// Command chạy load test — hỗ trợ cancel
 #[tauri::command]
 pub async fn run_load_test(
     app: AppHandle,
+    state: State<'_, AppState>,
     config: TestConfig,
 ) -> Result<TestResult, String> {
-    let timeout_ms = config.timeout_ms;
-    let engine = LoadTestEngine::new(timeout_ms);
+    // Tạo cancel token mới cho run này
+    let cancel = CancellationToken::new();
+    {
+        let mut token_lock = state.cancel_token.lock();
+        *token_lock = Some(cancel.clone());
+    }
+
+    let engine = LoadTestEngine::new(config.timeout_ms)?;
     let app_clone = app.clone();
 
     let result = engine
-        .run_burst(config, move |progress, req_result| {
+        .run_burst(config, cancel, move |progress, req_result| {
             let _ = app_clone.emit(
                 "test_progress",
                 serde_json::json!({
@@ -23,7 +46,25 @@ pub async fn run_load_test(
         })
         .await;
 
+    // Clear cancel token sau khi xong
+    {
+        let mut token_lock = state.cancel_token.lock();
+        *token_lock = None;
+    }
+
     Ok(result)
+}
+
+/// Command dừng test đang chạy
+#[tauri::command]
+pub async fn stop_test(state: State<'_, AppState>) -> Result<(), String> {
+    let token = state.cancel_token.lock().clone();
+    if let Some(cancel) = token {
+        cancel.cancel();
+        Ok(())
+    } else {
+        Err("No test is currently running".to_string())
+    }
 }
 
 /// Tokenize curl command — respects single/double quoted strings
@@ -36,18 +77,31 @@ fn tokenize_curl(cmd: &str) -> Vec<String> {
 
     while let Some(ch) = chars.next() {
         match ch {
-            '\'' if !in_double => { in_single = !in_single; }
-            '"' if !in_single => { in_double = !in_double; }
+            '\'' if !in_double => {
+                in_single = !in_single;
+            }
+            '"' if !in_single => {
+                in_double = !in_double;
+            }
             '\\' if !in_single && !in_double => {
-                if matches!(chars.peek(), Some('\n') | Some('\r')) { chars.next(); }
+                if matches!(chars.peek(), Some('\n') | Some('\r')) {
+                    chars.next();
+                }
             }
             ' ' | '\t' | '\n' | '\r' if !in_single && !in_double => {
-                if !current.is_empty() { tokens.push(current.clone()); current.clear(); }
+                if !current.is_empty() {
+                    tokens.push(current.clone());
+                    current.clear();
+                }
             }
-            _ => { current.push(ch); }
+            _ => {
+                current.push(ch);
+            }
         }
     }
-    if !current.is_empty() { tokens.push(current); }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
     tokens
 }
 
@@ -68,7 +122,9 @@ pub fn parse_curl(curl_command: String) -> Result<TestConfig, String> {
             "curl" => {}
             "-X" | "--request" => {
                 i += 1;
-                if i < tokens.len() { method = tokens[i].to_uppercase(); }
+                if i < tokens.len() {
+                    method = tokens[i].to_uppercase();
+                }
             }
             "-H" | "--header" => {
                 i += 1;
@@ -85,7 +141,9 @@ pub fn parse_curl(curl_command: String) -> Result<TestConfig, String> {
                 i += 1;
                 if i < tokens.len() {
                     body = Some(tokens[i].clone());
-                    if method == "GET" { method = "POST".to_string(); }
+                    if method == "GET" {
+                        method = "POST".to_string();
+                    }
                 }
             }
             p if (p.starts_with("http://") || p.starts_with("https://")) && url.is_empty() => {

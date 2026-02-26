@@ -6,9 +6,9 @@ import { History } from "./components/History";
 import { useAppStore } from "./store";
 
 const TABS = [
-  { id: "test", label: "⚡ Test", desc: "Configure & Fire" },
-  { id: "results", label: "📊 Results", desc: "Analysis" },
-  { id: "history", label: "📋 History", desc: "Past Runs" },
+  { id: "test", label: "Test" },
+  { id: "results", label: "Results" },
+  { id: "history", label: "History" },
 ] as const;
 
 const MIN_PANEL_WIDTH = 280;
@@ -60,24 +60,17 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-bg-900 text-gray-100 select-none">
-      {/* Header / Titlebar */}
+      {/* macOS traffic lights drag zone — pure empty bar, double-click maximizes */}
       <div
-        className="flex items-center justify-between px-5 py-3 border-b border-bg-700"
+        className="h-8 w-full shrink-0 bg-bg-900"
         style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-      >
-        <div className="flex items-center gap-3">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-primary to-secondary flex items-center justify-center text-sm font-bold">
-            🚀
-          </div>
-          <div>
-            <h1 className="text-sm font-bold gradient-text">SpamAPI Pro</h1>
-            <p className="text-xs text-gray-600">
-              Rust-powered API Load Tester
-            </p>
-          </div>
-        </div>
+      />
 
-        {/* Live status badge */}
+      {/* Status row — below drag zone, no-drag for clickable badges */}
+      <div
+        className="flex items-center justify-end px-5 pb-2 bg-bg-900 border-b border-bg-700 shrink-0"
+        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+      >
         <div className="flex items-center gap-2">
           {runStatus === "running" && (
             <div className="flex items-center gap-1.5 bg-primary/10 border border-primary/30 rounded-full px-3 py-1">
@@ -88,7 +81,14 @@ function App() {
           {runStatus === "completed" && (
             <div className="flex items-center gap-1.5 bg-success/10 border border-success/30 rounded-full px-3 py-1">
               <span className="text-xs text-success font-medium">
-                ✓ Completed
+                Completed
+              </span>
+            </div>
+          )}
+          {runStatus === "cancelled" && (
+            <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 rounded-full px-3 py-1">
+              <span className="text-xs text-amber-400 font-medium">
+                Stopped
               </span>
             </div>
           )}
@@ -135,22 +135,22 @@ function App() {
 
         {/* Right: Tabbed area */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Tabs */}
-          <div className="flex border-b border-bg-700 px-4">
+          {/* Tabs — minimal clean design */}
+          <div className="flex border-b border-bg-700 px-2">
             {TABS.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`relative px-5 py-3 text-sm font-medium transition-all ${
+                className={`relative px-4 py-3 text-xs font-semibold tracking-wide uppercase transition-all ${
                   activeTab === tab.id
                     ? "text-primary tab-active"
-                    : "text-gray-500 hover:text-gray-300"
+                    : "text-gray-600 hover:text-gray-400"
                 }`}
               >
                 {tab.label}
                 {tab.id === "results" &&
                 currentResult?.race_conditions_detected ? (
-                  <span className="absolute top-2 right-1 w-2 h-2 bg-red-500 rounded-full" />
+                  <span className="absolute top-2.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full" />
                 ) : null}
               </button>
             ))}

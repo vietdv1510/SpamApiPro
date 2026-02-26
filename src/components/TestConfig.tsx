@@ -1,13 +1,25 @@
 import { useRef, useEffect, useState } from "react";
-import { useAppStore } from "../store";
+import {
+  useAppStore,
+  type HttpMethod,
+  type TestMode,
+  type Header,
+} from "../store";
 import { useTestRunner } from "../hooks/useTestRunner";
 
-const METHODS = ["GET", "POST", "PUT", "DELETE", "PATCH"] as const;
+const METHODS: { value: HttpMethod; color: string }[] = [
+  { value: "GET", color: "#34d399" },
+  { value: "POST", color: "#60a5fa" },
+  { value: "PUT", color: "#fbbf24" },
+  { value: "DELETE", color: "#f87171" },
+  { value: "PATCH", color: "#a78bfa" },
+];
+
 const MODES = [
-  { value: "burst", label: "Burst", icon: "⚡", desc: "All at once" },
-  { value: "constant", label: "Constant", icon: "📊", desc: "Sustained" },
-  { value: "ramp_up", label: "Ramp Up", icon: "📈", desc: "Gradual" },
-  { value: "stress_test", label: "Stress", icon: "💥", desc: "Find limit" },
+  { value: "burst" as TestMode, label: "Burst", sub: "All at once" },
+  { value: "constant" as TestMode, label: "Constant", sub: "Sustained" },
+  { value: "ramp_up" as TestMode, label: "Ramp Up", sub: "Gradual" },
+  { value: "stress_test" as TestMode, label: "Stress", sub: "Find limit" },
 ];
 
 export function TestConfig() {
@@ -23,11 +35,13 @@ export function TestConfig() {
     runStatus,
   } = useAppStore();
 
-  const { run, importCurl, error } = useTestRunner();
+  const { run, stop, importCurl } = useTestRunner();
   const isRunning = runStatus === "running";
   const curlRef = useRef<HTMLTextAreaElement>(null);
   const [editingUsers, setEditingUsers] = useState(false);
   const [usersInput, setUsersInput] = useState(String(config.virtual_users));
+  const [runError, setRunError] = useState<string | null>(null);
+  const [showMethodPicker, setShowMethodPicker] = useState(false);
 
   useEffect(() => {
     if (showCurlImport && curlRef.current) curlRef.current.focus();
@@ -37,13 +51,28 @@ export function TestConfig() {
     if (!editingUsers) setUsersInput(String(config.virtual_users));
   }, [config.virtual_users, editingUsers]);
 
+  // Close method picker on outside click
+  useEffect(() => {
+    if (!showMethodPicker) return;
+    const handler = () => setShowMethodPicker(false);
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, [showMethodPicker]);
+
+  const currentMethod =
+    METHODS.find((m) => m.value === config.method) ?? METHODS[0];
+
   const handleHeaderChange = (
     index: number,
-    field: "key" | "value" | "enabled",
+    field: keyof Header,
     value: string | boolean,
   ) => {
     const updated = [...headerRows];
-    (updated[index] as any)[field] = value;
+    if (field === "enabled") {
+      updated[index] = { ...updated[index], enabled: value as boolean };
+    } else {
+      updated[index] = { ...updated[index], [field]: value as string };
+    }
     if (index === headerRows.length - 1 && field !== "enabled" && value) {
       updated.push({ key: "", value: "", enabled: true });
     }
@@ -73,56 +102,89 @@ export function TestConfig() {
     setEditingUsers(false);
   };
 
-  const methodColors: Record<string, string> = {
-    GET: "#34d399",
-    POST: "#60a5fa",
-    PUT: "#fbbf24",
-    DELETE: "#f87171",
-    PATCH: "#a78bfa",
+  const handleRun = async () => {
+    setRunError(null);
+    const result = await run();
+    if (result.error) setRunError(result.error);
   };
 
   return (
     <div className="flex flex-col h-full min-w-0">
-      {/* ─── SCROLLABLE AREA: URL + Headers + Body ─── */}
+      {/* ─── SCROLLABLE AREA ─── */}
       <div className="flex-1 overflow-y-auto overflow-x-hidden pr-1 space-y-4 pb-3">
-        {/* URL Bar */}
-        <div className="flex gap-2 min-w-0">
-          <select
-            value={config.method}
-            onChange={(e) => setConfig({ method: e.target.value as any })}
-            className="bg-bg-700 border border-bg-500 rounded-lg px-2 py-2.5 text-xs font-semibold font-mono focus:outline-none focus:border-primary cursor-pointer shrink-0"
-            style={{ color: methodColors[config.method], width: "78px" }}
-          >
+        {/* ─── URL Bar ─── */}
+        <div className="space-y-2">
+          {/* Method pills — px-1 to avoid edge clipping */}
+          <div className="flex gap-1 px-1">
             {METHODS.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
+              <button
+                key={m.value}
+                onClick={() => setConfig({ method: m.value })}
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold font-mono transition-all border ${
+                  config.method === m.value
+                    ? "border-opacity-60 scale-105"
+                    : "border-transparent bg-bg-700 opacity-40 hover:opacity-70"
+                }`}
+                style={
+                  config.method === m.value
+                    ? {
+                        color: m.color,
+                        backgroundColor: `${m.color}15`,
+                        borderColor: `${m.color}50`,
+                      }
+                    : { color: m.color }
+                }
+              >
+                {m.value}
+              </button>
             ))}
-          </select>
+          </div>
 
-          <input
-            type="url"
-            value={config.url}
-            onChange={(e) => setConfig({ url: e.target.value })}
-            placeholder="https://api.example.com/endpoint"
-            className="flex-1 min-w-0 bg-bg-700 border border-bg-500 rounded-lg px-3 py-2.5 text-xs font-mono focus:outline-none focus:border-primary transition-all placeholder-gray-600"
-          />
-
-          <button
-            onClick={() => setShowCurlImport(!showCurlImport)}
-            title="Import from cURL"
-            className="bg-bg-700 border border-bg-500 rounded-lg px-2 py-2.5 text-xs text-gray-400 hover:text-primary hover:border-primary transition-all shrink-0"
-          >
-            curl
-          </button>
+          {/* URL input + curl */}
+          <div className="flex gap-2 min-w-0">
+            <div className="flex-1 min-w-0 relative">
+              <span
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-[10px] font-bold font-mono pointer-events-none"
+                style={{ color: currentMethod.color }}
+              >
+                {config.method}
+              </span>
+              <input
+                type="url"
+                value={config.url}
+                onChange={(e) => setConfig({ url: e.target.value })}
+                placeholder="https://api.example.com/endpoint"
+                className="w-full bg-bg-700 border border-bg-500 rounded-lg pl-16 pr-3 py-2.5 text-xs font-mono focus:outline-none focus:border-primary transition-all placeholder-gray-600"
+              />
+            </div>
+            <button
+              onClick={() => setShowCurlImport(!showCurlImport)}
+              title="Import from cURL"
+              className={`border rounded-lg px-3 py-2.5 text-xs font-mono transition-all shrink-0 ${
+                showCurlImport
+                  ? "bg-primary/10 border-primary/40 text-primary"
+                  : "bg-bg-700 border-bg-500 text-gray-500 hover:text-primary hover:border-primary"
+              }`}
+            >
+              cURL
+            </button>
+          </div>
         </div>
 
-        {/* cURL Import */}
+        {/* cURL Import — fixed panel */}
         {showCurlImport && (
-          <div className="bg-bg-800 border border-bg-500 rounded-xl p-4 slide-in">
-            <p className="text-xs text-gray-400 mb-2 font-mono">
-              Paste your curl command:
-            </p>
+          <div className="bg-bg-800 border border-primary/20 rounded-xl p-4 slide-in">
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-xs text-primary font-medium font-mono">
+                📋 Paste cURL command
+              </p>
+              <button
+                onClick={() => setShowCurlImport(false)}
+                className="text-gray-600 hover:text-gray-300 text-xs px-1.5 py-0.5 rounded hover:bg-bg-600 transition-colors"
+              >
+                ✕
+              </button>
+            </div>
             <textarea
               ref={curlRef}
               value={curlImportText}
@@ -132,16 +194,15 @@ export function TestConfig() {
   -H "Authorization: Bearer token" \\
   -d '{"key": "value"}'`}
             />
-            <div className="flex justify-end gap-2 mt-2">
-              <button
-                onClick={() => setShowCurlImport(false)}
-                className="text-xs text-gray-500 hover:text-gray-300 px-3 py-1.5"
-              >
-                Cancel
-              </button>
+            <div className="flex justify-end mt-2">
               <button
                 onClick={handleCurlImport}
-                className="bg-primary/20 border border-primary/40 text-primary text-xs px-4 py-1.5 rounded-lg hover:bg-primary/30 transition-all"
+                disabled={!curlImportText.trim()}
+                className={`text-xs px-4 py-1.5 rounded-lg font-medium transition-all ${
+                  curlImportText.trim()
+                    ? "bg-primary/20 border border-primary/40 text-primary hover:bg-primary/30"
+                    : "bg-bg-600 text-gray-600 border border-bg-500 cursor-not-allowed"
+                }`}
               >
                 Import →
               </button>
@@ -166,7 +227,6 @@ export function TestConfig() {
           <div className="space-y-1.5">
             {headerRows.map((row, i) => (
               <div key={i} className="flex gap-1.5 items-center min-w-0">
-                {/* Custom checkbox */}
                 <label className="custom-checkbox shrink-0">
                   <input
                     type="checkbox"
@@ -210,7 +270,7 @@ export function TestConfig() {
         </div>
 
         {/* Body */}
-        {["POST", "PUT", "PATCH"].includes(config.method) && (
+        {(["POST", "PUT", "PATCH"] as HttpMethod[]).includes(config.method) && (
           <div>
             <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-2 font-semibold">
               Request Body
@@ -225,9 +285,8 @@ export function TestConfig() {
         )}
       </div>
 
-      {/* ─── PINNED BOTTOM: Settings + Mode + Button ─── */}
+      {/* ─── PINNED BOTTOM ─── */}
       <div className="shrink-0 border-t border-bg-700 pt-3 space-y-3">
-        {/* Load Settings — stacked layout to avoid cramped cards */}
         <div className="space-y-2">
           {/* Requests */}
           <div
@@ -291,7 +350,6 @@ export function TestConfig() {
               }}
               className="w-full custom-range"
             />
-            {/* Quick presets */}
             <div className="flex gap-1 mt-2">
               {[100, 500, 1000, 5000, 10000, 50000, 100000].map((v) => (
                 <button
@@ -307,24 +365,18 @@ export function TestConfig() {
                 </button>
               ))}
             </div>
-            {/* Warnings */}
             {config.virtual_users > 100000 && (
               <div className="mt-2 text-[10px] text-red-400 bg-red-500/10 rounded px-2 py-1">
                 ⚠️ {">"}100K — Risk of OOM. ~
-                {((config.virtual_users * 500) / 1024 / 1024).toFixed(0)}MB for
-                results + task overhead. IPC will serialize{" "}
-                {config.virtual_users.toLocaleString()} results to JSON —
-                frontend may freeze.
+                {((config.virtual_users * 500) / 1024 / 1024).toFixed(0)}MB
+                estimated.
               </div>
             )}
             {config.virtual_users > 10000 && config.virtual_users <= 100000 && (
               <div className="mt-2 text-[10px] text-amber-400 bg-amber-500/10 rounded px-2 py-1">
                 ⚡ Heavy load — ~
                 {((config.virtual_users * 500) / 1024 / 1024).toFixed(0)}MB
-                estimated RAM.{" "}
-                {config.virtual_users > 50000
-                  ? "Results transfer may cause brief UI lag."
-                  : "Ensure target server can handle the concurrency."}
+                estimated RAM.
               </div>
             )}
           </div>
@@ -346,7 +398,6 @@ export function TestConfig() {
                 step={100}
                 className="flex-1 bg-bg-600 border border-bg-500 rounded-lg px-3 py-1.5 text-primary font-mono font-bold text-sm focus:outline-none focus:border-primary/60"
               />
-              {/* Quick presets */}
               <div className="flex gap-1">
                 {[5000, 10000, 30000].map((v) => (
                   <button
@@ -366,59 +417,72 @@ export function TestConfig() {
           </div>
         </div>
 
-        {/* Mode Selector */}
+        {/* Mode Selector — clean text-only design */}
         <div className="grid grid-cols-4 gap-1.5">
           {MODES.map((m) => (
             <button
               key={m.value}
-              onClick={() => setConfig({ mode: m.value as any })}
-              className={`p-2 rounded-lg border text-center transition-all ${
+              onClick={() => setConfig({ mode: m.value })}
+              className={`py-2 px-1 rounded-lg border text-center transition-all ${
                 config.mode === m.value
                   ? "border-primary bg-primary/10"
                   : "border-bg-500 bg-bg-700 hover:border-bg-400"
               }`}
             >
-              <div className="text-sm leading-none">{m.icon}</div>
-              <div className="text-[10px] font-semibold mt-1 truncate">
+              <div
+                className={`text-[11px] font-semibold ${
+                  config.mode === m.value ? "text-primary" : "text-gray-400"
+                }`}
+              >
                 {m.label}
               </div>
+              <div className="text-[9px] text-gray-600 mt-0.5">{m.sub}</div>
             </button>
           ))}
         </div>
 
-        {error && (
+        {runError && (
           <div className="bg-red-500/10 border border-red-500/40 rounded-xl px-3 py-2 text-red-400 text-xs">
-            ⚠️ {error}
+            ⚠️ {runError}
           </div>
         )}
 
-        {/* Run Button */}
-        <button
-          onClick={run}
-          disabled={isRunning || !config.url}
-          className={`w-full py-3 rounded-2xl font-bold text-sm transition-all ${
-            isRunning
-              ? "bg-bg-600 text-gray-500 cursor-not-allowed"
-              : "bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 active:scale-95 shadow-lg"
-          }`}
-          style={
-            isRunning
-              ? {}
-              : {
-                  boxShadow:
-                    "0 0 30px rgba(0,212,255,0.3), 0 0 60px rgba(124,58,237,0.2)",
-                }
-          }
-        >
-          {isRunning ? (
+        {/* Run / Stop Buttons */}
+        {isRunning ? (
+          <button
+            onClick={stop}
+            className="w-full py-3 rounded-2xl font-bold text-sm bg-gradient-to-r from-red-600 to-red-500 text-white hover:opacity-90 active:scale-95 transition-all shadow-lg"
+            style={{
+              boxShadow:
+                "0 0 30px rgba(239,68,68,0.3), 0 0 60px rgba(239,68,68,0.15)",
+            }}
+          >
             <span className="flex items-center justify-center gap-2">
-              <span className="w-4 h-4 border-2 border-gray-500 border-t-gray-300 rounded-full animate-spin" />
-              Running...
+              <span className="w-4 h-4 border-2 border-red-300 border-t-white rounded-full animate-spin" />
+              ⏹ Stop Test
             </span>
-          ) : (
-            `🚀 Fire ${config.virtual_users.toLocaleString()} Requests`
-          )}
-        </button>
+          </button>
+        ) : (
+          <button
+            onClick={handleRun}
+            disabled={!config.url}
+            className={`w-full py-3 rounded-2xl font-bold text-sm transition-all ${
+              !config.url
+                ? "bg-bg-600 text-gray-500 cursor-not-allowed"
+                : "bg-gradient-to-r from-primary to-secondary text-white hover:opacity-90 active:scale-95 shadow-lg"
+            }`}
+            style={
+              !config.url
+                ? {}
+                : {
+                    boxShadow:
+                      "0 0 30px rgba(0,212,255,0.3), 0 0 60px rgba(124,58,237,0.2)",
+                  }
+            }
+          >
+            🚀 Fire {config.virtual_users.toLocaleString()} Requests
+          </button>
+        )}
       </div>
     </div>
   );

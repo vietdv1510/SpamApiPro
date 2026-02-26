@@ -26,6 +26,7 @@ tokio = { version = "1", features = ["full"] }
 # Metrics chính xác
 hdrhistogram = "7"
 parking_lot = "0.12"
+tokio-util = { version = "0.7", features = ["rt"] }
 
 
 

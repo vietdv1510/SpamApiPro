@@ -1,7 +1,7 @@
 import { useAppStore } from "../store";
 
 export function History() {
-  const { history, setActiveTab } = useAppStore();
+  const { history } = useAppStore();
 
   if (history.length === 0) {
     return (
@@ -26,8 +26,9 @@ export function History() {
             key={i}
             className="bg-bg-800 border border-bg-600 rounded-xl p-4 hover:border-bg-500 transition-all cursor-pointer group"
             onClick={() => {
-              useAppStore.getState().setCurrentResult(r);
-              setActiveTab("results");
+              const store = useAppStore.getState();
+              store.setCurrentResult(r);
+              store.setActiveTab("results");
             }}
           >
             <div className="flex justify-between items-start">

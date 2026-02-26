@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 
 export type TestMode = "burst" | "constant" | "ramp_up" | "stress_test";
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
@@ -37,6 +38,7 @@ export interface TestResult {
   total_requests: number;
   success_count: number;
   error_count: number;
+  cancelled_count: number;
   total_duration_ms: number;
   requests_per_second: number;
   burst_dispatch_us: number;
@@ -54,10 +56,16 @@ export interface TestResult {
   error_types: Record<string, number>;
   timeline: RequestResult[];
   status_distribution: Record<string, number>;
+  was_cancelled: boolean;
 }
 
 export type AppTab = "test" | "results" | "history";
-export type RunStatus = "idle" | "running" | "completed" | "error";
+export type RunStatus =
+  | "idle"
+  | "running"
+  | "completed"
+  | "error"
+  | "cancelled";
 
 interface AppState {
   // Config
@@ -88,7 +96,7 @@ interface AppState {
   setRunStatus: (status: RunStatus) => void;
   setProgress: (p: number) => void;
   setCurrentResult: (r: TestResult | null) => void;
-  addLiveResult: (r: RequestResult) => void;
+  addLiveResults: (batch: RequestResult[]) => void;
   resetLive: () => void;
   setActiveTab: (tab: AppTab) => void;
   setCurlImportText: (text: string) => void;
@@ -98,101 +106,121 @@ interface AppState {
   getEffectiveHeaders: () => Record<string, string>;
 }
 
-export const useAppStore = create<AppState>((set, get) => ({
-  config: {
-    url: "https://httpbin.org/get",
-    method: "GET",
-    headers: {},
-    body: null,
-    virtual_users: 100,
-    duration_secs: null,
-    iterations: 1,
-    mode: "burst",
-    timeout_ms: 10000,
-    think_time_ms: 0,
-  },
-  headerRows: [
-    { key: "Content-Type", value: "application/json", enabled: true },
-    { key: "Accept", value: "application/json", enabled: true },
-    { key: "", value: "", enabled: true },
-  ],
-  runStatus: "idle",
-  progress: 0,
-  currentResult: null,
-  liveTimeline: [],
-  liveCounters: { done: 0, success: 0, errors: 0, totalLatency: 0 },
-  history: [],
-  activeTab: "test",
-  curlImportText: "",
-  showCurlImport: false,
-
-  setConfig: (config) => set((s) => ({ config: { ...s.config, ...config } })),
-
-  setHeaderRows: (rows) => set({ headerRows: rows }),
-
-  setRunStatus: (status) => set({ runStatus: status }),
-
-  setProgress: (progress) => set({ progress }),
-
-  setCurrentResult: (currentResult) => set({ currentResult }),
-
-  addLiveResult: (r) =>
-    set((s) => ({
-      liveTimeline: [...s.liveTimeline.slice(-200), r],
-      liveCounters: {
-        done: s.liveCounters.done + 1,
-        success: s.liveCounters.success + (r.success ? 1 : 0),
-        errors: s.liveCounters.errors + (r.success ? 0 : 1),
-        totalLatency: s.liveCounters.totalLatency + r.latency_ms,
+export const useAppStore = create<AppState>()(
+  persist(
+    (set, get) => ({
+      config: {
+        url: "https://httpbin.org/get",
+        method: "GET" as HttpMethod,
+        headers: {},
+        body: null,
+        virtual_users: 100,
+        duration_secs: null,
+        iterations: 1,
+        mode: "burst" as TestMode,
+        timeout_ms: 10000,
+        think_time_ms: 0,
       },
-    })),
-
-  resetLive: () =>
-    set({
+      headerRows: [
+        { key: "Content-Type", value: "application/json", enabled: true },
+        { key: "Accept", value: "application/json", enabled: true },
+        { key: "", value: "", enabled: true },
+      ],
+      runStatus: "idle" as RunStatus,
+      progress: 0,
+      currentResult: null,
       liveTimeline: [],
       liveCounters: { done: 0, success: 0, errors: 0, totalLatency: 0 },
-      progress: 0,
-    }),
-
-  setActiveTab: (activeTab) => set({ activeTab }),
-
-  setCurlImportText: (curlImportText) => set({ curlImportText }),
-
-  setShowCurlImport: (showCurlImport) => set({ showCurlImport }),
-
-  addToHistory: (config, result) =>
-    set((s) => ({
-      history: [
-        {
-          config,
-          result,
-          timestamp: new Date().toLocaleTimeString("vi-VN"),
-        },
-        ...s.history.slice(0, 19), // keep 20 entries
-      ],
-    })),
-
-  applyParsedConfig: (config) => {
-    const newHeaders: Header[] = Object.entries(config.headers || {}).map(
-      ([key, value]) => ({ key, value, enabled: true }),
-    );
-    newHeaders.push({ key: "", value: "", enabled: true });
-    set({
-      config,
-      headerRows: newHeaders,
-      showCurlImport: false,
+      history: [],
+      activeTab: "test" as AppTab,
       curlImportText: "",
-    });
-  },
+      showCurlImport: false,
 
-  getEffectiveHeaders: () => {
-    const { headerRows } = get();
-    const result: Record<string, string> = {};
-    for (const h of headerRows) {
-      if (h.enabled && h.key.trim()) {
-        result[h.key.trim()] = h.value;
-      }
-    }
-    return result;
-  },
-}));
+      setConfig: (config) =>
+        set((s) => ({ config: { ...s.config, ...config } })),
+
+      setHeaderRows: (rows) => set({ headerRows: rows }),
+
+      setRunStatus: (status) => set({ runStatus: status }),
+
+      setProgress: (progress) => set({ progress }),
+
+      setCurrentResult: (currentResult) => set({ currentResult }),
+
+      // Batch update — nhận array thay vì single item, giảm re-renders
+      addLiveResults: (batch) =>
+        set((s) => {
+          const combined = [...s.liveTimeline, ...batch];
+          return {
+            liveTimeline:
+              combined.length > 200 ? combined.slice(-200) : combined,
+            liveCounters: {
+              done: s.liveCounters.done + batch.length,
+              success:
+                s.liveCounters.success + batch.filter((r) => r.success).length,
+              errors:
+                s.liveCounters.errors + batch.filter((r) => !r.success).length,
+              totalLatency:
+                s.liveCounters.totalLatency +
+                batch.reduce((sum, r) => sum + r.latency_ms, 0),
+            },
+          };
+        }),
+
+      resetLive: () =>
+        set({
+          liveTimeline: [],
+          liveCounters: { done: 0, success: 0, errors: 0, totalLatency: 0 },
+          progress: 0,
+        }),
+
+      setActiveTab: (activeTab) => set({ activeTab }),
+
+      setCurlImportText: (curlImportText) => set({ curlImportText }),
+
+      setShowCurlImport: (showCurlImport) => set({ showCurlImport }),
+
+      addToHistory: (config, result) =>
+        set((s) => ({
+          history: [
+            {
+              config,
+              result,
+              timestamp: new Date().toLocaleTimeString("vi-VN"),
+            },
+            ...s.history.slice(0, 19),
+          ],
+        })),
+
+      applyParsedConfig: (config) => {
+        const newHeaders: Header[] = Object.entries(config.headers || {}).map(
+          ([key, value]) => ({ key, value, enabled: true }),
+        );
+        newHeaders.push({ key: "", value: "", enabled: true });
+        set({
+          config,
+          headerRows: newHeaders,
+          showCurlImport: false,
+          curlImportText: "",
+        });
+      },
+
+      getEffectiveHeaders: () => {
+        const { headerRows } = get();
+        const result: Record<string, string> = {};
+        for (const h of headerRows) {
+          if (h.enabled && h.key.trim()) {
+            result[h.key.trim()] = h.value;
+          }
+        }
+        return result;
+      },
+    }),
+    {
+      name: "spamapi-storage",
+      // Chỉ persist history — giữ data qua sessions
+      partialize: (state) =>
+        ({ history: state.history }) as unknown as AppState,
+    },
+  ),
+);

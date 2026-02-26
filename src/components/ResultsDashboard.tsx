@@ -1,3 +1,4 @@
+import { useMemo } from "react";
 import {
   BarChart,
   Bar,
@@ -40,27 +41,53 @@ function MetricCard({
 
 function RaceConditionBadge({ result }: { result: TestResult }) {
   const hasRace = result.race_conditions_detected > 0;
+
+  // Smart analysis: count 2xx vs non-2xx for race condition detection
+  const successCount2xx = result.status_distribution["2xx"] ?? 0;
+  const total = result.total_requests - (result.cancelled_count ?? 0);
+  const hasDuplicateSuccess = successCount2xx > 1 && hasRace;
+
   return (
     <div
       className={`rounded-xl p-4 border ${
-        hasRace
+        hasDuplicateSuccess
           ? "bg-red-500/10 border-red-500/40"
-          : "bg-success/10 border-success/30"
+          : hasRace
+            ? "bg-amber-500/10 border-amber-500/40"
+            : "bg-success/10 border-success/30"
       }`}
     >
       <div
-        className={`text-3xl font-bold font-mono ${hasRace ? "text-danger" : "text-success"}`}
+        className={`text-3xl font-bold font-mono ${
+          hasDuplicateSuccess
+            ? "text-danger"
+            : hasRace
+              ? "text-amber-400"
+              : "text-success"
+        }`}
       >
         {hasRace ? `⚠️ ${result.race_conditions_detected}` : "✓ 0"}
       </div>
       <div className="text-xs text-gray-500 mt-1">Race Conditions</div>
-      <div
-        className={`text-xs mt-2 font-medium ${hasRace ? "text-red-400" : "text-success"}`}
-      >
-        {hasRace
-          ? `${result.unique_responses} different responses detected`
-          : `${result.response_consistency.toFixed(1)}% consistent`}
-      </div>
+
+      {hasDuplicateSuccess ? (
+        <div className="mt-2 space-y-1">
+          <div className="text-xs text-red-400 font-bold">
+            🔴 {successCount2xx}/{total} requests returned 2xx
+          </div>
+          <div className="text-[10px] text-red-400/80">
+            Server allowed {successCount2xx} duplicate operations!
+          </div>
+        </div>
+      ) : hasRace ? (
+        <div className="text-xs mt-2 font-medium text-amber-400">
+          {result.unique_responses} different responses detected
+        </div>
+      ) : (
+        <div className="text-xs mt-2 font-medium text-success">
+          {result.response_consistency.toFixed(1)}% consistent
+        </div>
+      )}
     </div>
   );
 }
@@ -85,31 +112,41 @@ export function ResultsDashboard() {
   const successRate =
     r.total_requests > 0 ? (r.success_count / r.total_requests) * 100 : 0;
 
-  // Timeline chart data (bucket by 10ms)
-  const buckets: Record<
-    number,
-    { latency: number; success: number; error: number }
-  > = {};
-  r.timeline.forEach((req) => {
-    const bucket = Math.floor(req.latency_ms / 20) * 20;
-    if (!buckets[bucket])
-      buckets[bucket] = { latency: bucket, success: 0, error: 0 };
-    if (req.success) buckets[bucket].success++;
-    else buckets[bucket].error++;
-  });
-  const chartData = Object.values(buckets).sort(
-    (a, b) => a.latency - b.latency,
-  );
+  // useMemo để tránh tính toán lại mỗi render — critical với 100K results
+  const chartData = useMemo(() => {
+    const buckets: Record<
+      number,
+      { latency: number; success: number; error: number }
+    > = {};
+    r.timeline.forEach((req) => {
+      if (req.error === "Cancelled") return; // skip cancelled
+      const bucket = Math.floor(req.latency_ms / 20) * 20;
+      if (!buckets[bucket])
+        buckets[bucket] = { latency: bucket, success: 0, error: 0 };
+      if (req.success) buckets[bucket].success++;
+      else buckets[bucket].error++;
+    });
+    return Object.values(buckets).sort((a, b) => a.latency - b.latency);
+  }, [r.timeline]);
 
-  // Latency percentile chart
-  const percentileData = [
-    { name: "Min", value: r.latency_min_ms },
-    { name: "P50", value: r.latency_p50_ms },
-    { name: "P90", value: r.latency_p90_ms },
-    { name: "P95", value: r.latency_p95_ms },
-    { name: "P99", value: r.latency_p99_ms },
-    { name: "Max", value: r.latency_max_ms },
-  ];
+  const percentileData = useMemo(
+    () => [
+      { name: "Min", value: r.latency_min_ms },
+      { name: "P50", value: r.latency_p50_ms },
+      { name: "P90", value: r.latency_p90_ms },
+      { name: "P95", value: r.latency_p95_ms },
+      { name: "P99", value: r.latency_p99_ms },
+      { name: "Max", value: r.latency_max_ms },
+    ],
+    [
+      r.latency_min_ms,
+      r.latency_p50_ms,
+      r.latency_p90_ms,
+      r.latency_p95_ms,
+      r.latency_p99_ms,
+      r.latency_max_ms,
+    ],
+  );
 
   const tooltipStyle = {
     backgroundColor: "#1A1A24",
@@ -120,6 +157,18 @@ export function ResultsDashboard() {
 
   return (
     <div className="overflow-y-auto h-full space-y-4 pr-1">
+      {/* Cancelled Banner */}
+      {r.was_cancelled && (
+        <div className="bg-amber-500/10 border border-amber-500/40 rounded-xl px-4 py-3 flex items-center gap-2 slide-in">
+          <span className="text-amber-400 text-sm">⚠️</span>
+          <span className="text-amber-400 text-sm font-medium">
+            Test was cancelled — showing partial results
+            {r.cancelled_count > 0 &&
+              ` (${r.cancelled_count} requests cancelled)`}
+          </span>
+        </div>
+      )}
+
       {/* Summary Row */}
       <div className="grid grid-cols-5 gap-3">
         <div className="bg-bg-700 border border-bg-500 rounded-xl p-4 col-span-1">
