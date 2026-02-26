@@ -530,7 +530,10 @@ impl LoadTestEngine {
 
         let total_duration_ms = global_start.elapsed().as_secs_f64() * 1000.0;
         let was_cancelled = cancel.is_cancelled();
-        let raw_results = Arc::try_unwrap(results).unwrap().into_inner();
+        let raw_results = match Arc::try_unwrap(results) {
+            Ok(mutex) => mutex.into_inner(),
+            Err(arc) => arc.lock().clone(),
+        };
         let mut result = self.aggregate_results(raw_results, total_duration_ms);
         result.was_cancelled = was_cancelled;
         result.cancelled_count = cancelled_count.load(Ordering::Relaxed) as u64;
@@ -606,7 +609,10 @@ impl LoadTestEngine {
                         builder = builder.body(b.clone());
                     }
 
-                    let request = builder.build().unwrap();
+                    let request = match builder.build() {
+                        Ok(r) => r,
+                        Err(_) => return,
+                    };
                     let result = tokio::select! {
                         biased;
                         _ = cancel.cancelled() => {
@@ -659,7 +665,10 @@ impl LoadTestEngine {
 
         let total_duration_ms = global_start.elapsed().as_secs_f64() * 1000.0;
         let was_cancelled = cancel.is_cancelled();
-        let raw_results = Arc::try_unwrap(results).unwrap().into_inner();
+        let raw_results = match Arc::try_unwrap(results) {
+            Ok(mutex) => mutex.into_inner(),
+            Err(arc) => arc.lock().clone(),
+        };
         let mut result = self.aggregate_results(raw_results, total_duration_ms);
         result.was_cancelled = was_cancelled;
         result.cancelled_count = cancelled_count.load(Ordering::Relaxed) as u64;
@@ -787,7 +796,10 @@ impl LoadTestEngine {
             current_users *= 2;
         }
 
-        let raw_results = Arc::try_unwrap(results).unwrap().into_inner();
+        let raw_results = match Arc::try_unwrap(results) {
+            Ok(mutex) => mutex.into_inner(),
+            Err(arc) => arc.lock().clone(),
+        };
         let mut result = self.aggregate_results(raw_results, global_start.elapsed().as_secs_f64()*1000.0);
         result.was_cancelled = cancel.is_cancelled();
         result

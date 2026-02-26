@@ -13,6 +13,12 @@ export function LiveMonitor() {
     null,
   );
 
+  useEffect(() => {
+    if (runStatus === "running") {
+      setSelectedRequest(null);
+    }
+  }, [runStatus]);
+
   const logsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (logsRef.current && !selectedRequest) {

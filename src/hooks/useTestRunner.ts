@@ -22,7 +22,7 @@ export function useTestRunner() {
       return { error: "Invalid URL — must start with http:// or https://" };
     }
 
-    useAppStore.setState({ runStatus: "running" });
+    useAppStore.setState({ runStatus: "running", activeTab: "test" });
     state.resetLive();
     state.setCurrentResult(null);
 
