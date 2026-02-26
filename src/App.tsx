@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TestConfig } from "./components/TestConfig";
 import { LiveMonitor } from "./components/LiveMonitor";
 import { ResultsDashboard } from "./components/ResultsDashboard";
@@ -60,16 +61,27 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-bg-900 text-gray-100 select-none">
-      {/* Unified header — drag region + status badges in one row */}
+      {/* Header bar — onMouseDown startDragging() is the reliable Tauri v2 drag API */}
       <div
-        data-tauri-drag-region
-        className="h-10 w-full shrink-0 bg-bg-900 border-b border-bg-700 flex items-center justify-end px-5"
-        style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
+        className="h-10 w-full shrink-0 bg-bg-900 border-b border-bg-700 flex items-center justify-end px-5 cursor-default"
+        onMouseDown={(e) => {
+          // Only drag on left-click on empty area (not on badges)
+          if (e.target === e.currentTarget && e.button === 0) {
+            getCurrentWindow().startDragging();
+          }
+        }}
+        onDoubleClick={(e) => {
+          // Double-click empty area to toggle maximize
+          if (e.target === e.currentTarget) {
+            const win = getCurrentWindow();
+            win.isMaximized().then((maximized) => {
+              if (maximized) win.unmaximize();
+              else win.maximize();
+            });
+          }
+        }}
       >
-        <div
-          className="flex items-center gap-2"
-          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
-        >
+        <div className="flex items-center gap-2">
           {runStatus === "running" && (
             <div className="flex items-center gap-1.5 bg-primary/10 border border-primary/30 rounded-full px-3 py-0.5">
               <span className="w-1.5 h-1.5 bg-primary rounded-full pulse-dot" />
