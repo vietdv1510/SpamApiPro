@@ -153,7 +153,10 @@ export function ResultsDashboard() {
     border: "1px solid #2A2A38",
     borderRadius: "8px",
     fontSize: "12px",
+    color: "#E5E7EB",
   };
+  const tooltipLabelStyle = { color: "#9CA3AF", marginBottom: 4 };
+  const tooltipItemStyle = { color: "#E5E7EB" };
 
   return (
     <div className="overflow-y-auto h-full space-y-4 pr-1">
@@ -169,58 +172,62 @@ export function ResultsDashboard() {
         </div>
       )}
 
-      {/* Summary Row */}
-      <div className="grid grid-cols-5 gap-3">
-        <div className="bg-bg-700 border border-bg-500 rounded-xl p-4 col-span-1">
-          <div className="text-3xl font-bold font-mono text-white">
+      {/* Summary Row — 2+3 responsive instead of rigid grid-cols-5 */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="bg-bg-700 border border-bg-500 rounded-xl p-3">
+          <div className="text-2xl font-bold font-mono text-white tabular-nums">
             {r.total_requests}
           </div>
           <div className="text-xs text-gray-500">Total Requests</div>
         </div>
         <div
-          className={`rounded-xl p-4 border ${successRate === 100 ? "bg-success/10 border-success/30" : successRate > 90 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}
+          className={`rounded-xl p-3 border ${successRate === 100 ? "bg-success/10 border-success/30" : successRate > 90 ? "bg-amber-500/10 border-amber-500/30" : "bg-red-500/10 border-red-500/30"}`}
         >
           <div
-            className={`text-3xl font-bold font-mono ${successRate === 100 ? "text-success" : successRate > 90 ? "text-amber-400" : "text-danger"}`}
+            className={`text-2xl font-bold font-mono tabular-nums ${successRate === 100 ? "text-success" : successRate > 90 ? "text-amber-400" : "text-danger"}`}
           >
             {successRate.toFixed(1)}%
           </div>
           <div className="text-xs text-gray-500">Success Rate</div>
         </div>
-        <div className="bg-bg-700 border border-bg-500 rounded-xl p-4">
-          <div className="text-3xl font-bold font-mono text-primary">
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        <div className="bg-bg-700 border border-bg-500 rounded-xl p-3">
+          <div className="text-xl font-bold font-mono text-primary tabular-nums">
             {r.requests_per_second.toFixed(0)}
           </div>
           <div className="text-xs text-gray-500">RPS</div>
         </div>
-        <div className="bg-bg-700 border border-bg-500 rounded-xl p-4">
-          <div className="text-3xl font-bold font-mono text-success">
+        <div className="bg-bg-700 border border-bg-500 rounded-xl p-3">
+          <div className="text-xl font-bold font-mono text-success tabular-nums">
             {r.success_count}
           </div>
           <div className="text-xs text-gray-500">Success</div>
         </div>
-        <div className="bg-bg-700 border border-bg-500 rounded-xl p-4">
-          <div className="text-3xl font-bold font-mono text-danger">
+        <div className="bg-bg-700 border border-bg-500 rounded-xl p-3">
+          <div className="text-xl font-bold font-mono text-danger tabular-nums">
             {r.error_count}
           </div>
           <div className="text-xs text-gray-500">Errors</div>
         </div>
       </div>
 
-      {/* Race Condition + Key Metrics + Dispatch */}
-      <div className="grid grid-cols-5 gap-3">
+      {/* Race Condition + Key Metrics */}
+      <div className="grid grid-cols-2 gap-2">
         <RaceConditionBadge result={r} />
-        <div className="bg-secondary/10 border border-secondary/30 rounded-xl p-4">
-          <div className="text-2xl font-bold font-mono text-secondary">
+        <div className="bg-secondary/10 border border-secondary/30 rounded-xl p-3">
+          <div className="text-xl font-bold font-mono text-secondary">
             {r.burst_dispatch_us < 1000
               ? `${r.burst_dispatch_us.toFixed(0)}µs`
               : `${(r.burst_dispatch_us / 1000).toFixed(2)}ms`}
           </div>
           <div className="text-xs text-gray-500 mt-1">Burst Dispatch</div>
-          <div className="text-xs mt-1 text-secondary/80">
+          <div className="text-xs mt-1 text-secondary/70">
             Tool firing speed
           </div>
         </div>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
         <MetricCard label="Avg Latency" value={r.latency_avg_ms} />
         <MetricCard
           label="Min Latency"
@@ -235,44 +242,66 @@ export function ResultsDashboard() {
       </div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-2 gap-3">
         {/* Latency Distribution */}
-        <div className="bg-bg-800 border border-bg-600 rounded-xl p-4">
-          <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-4 font-semibold">
+        <div className="bg-bg-800 border border-bg-600 rounded-xl p-3 min-w-0">
+          <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-3 font-semibold">
             Latency Distribution
           </h3>
-          <ResponsiveContainer width="100%" height={160}>
-            <BarChart data={chartData}>
+          <ResponsiveContainer width="100%" height={140}>
+            <BarChart
+              data={chartData}
+              margin={{ top: 0, right: 0, bottom: 0, left: -10 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="#2A2A38" />
               <XAxis
                 dataKey="latency"
-                tick={{ fill: "#6B7280", fontSize: 10 }}
+                tick={{ fill: "#6B7280", fontSize: 9 }}
                 tickFormatter={(v) => `${v}ms`}
               />
-              <YAxis tick={{ fill: "#6B7280", fontSize: 10 }} />
-              <Tooltip contentStyle={tooltipStyle} />
-              <Bar dataKey="success" fill="#10B981" radius={[2, 2, 0, 0]} />
-              <Bar dataKey="error" fill="#EF4444" radius={[2, 2, 0, 0]} />
+              <YAxis tick={{ fill: "#6B7280", fontSize: 9 }} />
+              <Tooltip
+                contentStyle={tooltipStyle}
+                labelStyle={tooltipLabelStyle}
+                itemStyle={tooltipItemStyle}
+              />
+              <Bar
+                dataKey="success"
+                fill="#10B981"
+                radius={[2, 2, 0, 0]}
+                name="Success"
+              />
+              <Bar
+                dataKey="error"
+                fill="#EF4444"
+                radius={[2, 2, 0, 0]}
+                name="Error"
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
         {/* Percentile Chart */}
-        <div className="bg-bg-800 border border-bg-600 rounded-xl p-4">
-          <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-4 font-semibold">
+        <div className="bg-bg-800 border border-bg-600 rounded-xl p-3 min-w-0">
+          <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-3 font-semibold">
             Latency Percentiles
           </h3>
-          <ResponsiveContainer width="100%" height={160}>
-            <BarChart data={percentileData}>
+          <ResponsiveContainer width="100%" height={140}>
+            <BarChart
+              data={percentileData}
+              margin={{ top: 0, right: 0, bottom: 0, left: -10 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="#2A2A38" />
-              <XAxis dataKey="name" tick={{ fill: "#6B7280", fontSize: 10 }} />
+              <XAxis dataKey="name" tick={{ fill: "#6B7280", fontSize: 9 }} />
               <YAxis
-                tick={{ fill: "#6B7280", fontSize: 10 }}
+                tick={{ fill: "#6B7280", fontSize: 9 }}
                 tickFormatter={(v) => `${v}ms`}
               />
               <Tooltip
                 contentStyle={tooltipStyle}
-                formatter={(v) => [`${Number(v).toFixed(2)}ms`]}
+                labelStyle={tooltipLabelStyle}
+                itemStyle={tooltipItemStyle}
+                formatter={(v) => [`${Number(v).toFixed(2)}ms`, "Latency"]}
               />
               <Bar dataKey="value" radius={[4, 4, 0, 0]}>
                 {percentileData.map((entry, index) => (

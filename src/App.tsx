@@ -60,34 +60,31 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-bg-900 text-gray-100 select-none">
-      {/* macOS traffic lights drag zone — data-tauri-drag-region enables double-click maximize */}
+      {/* Unified header — drag region + status badges in one row */}
       <div
         data-tauri-drag-region
-        className="h-8 w-full shrink-0 bg-bg-900"
+        className="h-10 w-full shrink-0 bg-bg-900 border-b border-bg-700 flex items-center justify-end px-5"
         style={{ WebkitAppRegion: "drag" } as React.CSSProperties}
-      />
-
-      {/* Status row — below drag zone, no-drag for clickable badges */}
-      <div
-        className="flex items-center justify-end px-5 pb-2 bg-bg-900 border-b border-bg-700 shrink-0"
-        style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
       >
-        <div className="flex items-center gap-2">
+        <div
+          className="flex items-center gap-2"
+          style={{ WebkitAppRegion: "no-drag" } as React.CSSProperties}
+        >
           {runStatus === "running" && (
-            <div className="flex items-center gap-1.5 bg-primary/10 border border-primary/30 rounded-full px-3 py-1">
+            <div className="flex items-center gap-1.5 bg-primary/10 border border-primary/30 rounded-full px-3 py-0.5">
               <span className="w-1.5 h-1.5 bg-primary rounded-full pulse-dot" />
               <span className="text-xs text-primary font-medium">Running</span>
             </div>
           )}
           {runStatus === "completed" && (
-            <div className="flex items-center gap-1.5 bg-success/10 border border-success/30 rounded-full px-3 py-1">
+            <div className="flex items-center gap-1.5 bg-success/10 border border-success/30 rounded-full px-3 py-0.5">
               <span className="text-xs text-success font-medium">
                 Completed
               </span>
             </div>
           )}
           {runStatus === "cancelled" && (
-            <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 rounded-full px-3 py-1">
+            <div className="flex items-center gap-1.5 bg-amber-500/10 border border-amber-500/30 rounded-full px-3 py-0.5">
               <span className="text-xs text-amber-400 font-medium">
                 Stopped
               </span>
