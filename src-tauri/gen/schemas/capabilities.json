@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default capabilities for SpamAPI","local":true,"windows":["main"],"permissions":["core:default","shell:default","shell:allow-open","fs:default"]}}
+{"default":{"identifier":"default","description":"Default capabilities for SpamAPI","local":true,"windows":["main"],"permissions":["core:default","shell:default","shell:allow-open","fs:default","core:window:allow-start-dragging","core:window:allow-maximize","core:window:allow-unmaximize","core:window:allow-is-maximized","core:window:allow-toggle-maximize"]}}
