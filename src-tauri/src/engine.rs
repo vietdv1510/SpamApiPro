@@ -440,6 +440,9 @@ impl LoadTestEngine {
             if let Some(status) = r.status_code {
                 let key = format!("{}xx", status / 100);
                 *status_distribution.entry(key).or_insert(0) += 1;
+                // Also track exact status codes
+                let exact_key = status.to_string();
+                *status_distribution.entry(exact_key).or_insert(0) += 1;
             }
 
             if let Some(body) = &r.response_body {

@@ -345,6 +345,51 @@ export function ResultsDashboard() {
         ))}
       </div>
 
+      {/* Status Code Distribution */}
+      {Object.keys(r.status_distribution).length > 0 &&
+        (() => {
+          // Filter only exact status codes (3 digits), not categories like "2xx"
+          const exactCodes = Object.entries(r.status_distribution)
+            .filter(([key]) => /^\d{3}$/.test(key))
+            .sort(([a], [b]) => Number(a) - Number(b));
+
+          if (exactCodes.length === 0) return null;
+
+          return (
+            <div className="bg-bg-800 border border-bg-600 rounded-xl p-4">
+              <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-3 font-semibold">
+                Status Code Distribution
+              </h3>
+              <div className="grid grid-cols-3 gap-2">
+                {exactCodes.map(([code, count]) => {
+                  const num = Number(code);
+                  const color =
+                    num < 300
+                      ? "text-success border-success/30 bg-success/5"
+                      : num < 400
+                        ? "text-blue-400 border-blue-400/30 bg-blue-400/5"
+                        : num < 500
+                          ? "text-amber-400 border-amber-400/30 bg-amber-400/5"
+                          : "text-danger border-red-500/30 bg-red-500/5";
+                  return (
+                    <div
+                      key={code}
+                      className={`flex items-center justify-between rounded-lg border px-3 py-2 ${color}`}
+                    >
+                      <span className="font-mono font-bold text-sm">
+                        {code}
+                      </span>
+                      <span className="font-mono text-xs opacity-80">
+                        {count}x
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })()}
+
       {/* Error breakdown */}
       {Object.keys(r.error_types).length > 0 && (
         <div className="bg-red-500/5 border border-red-500/20 rounded-xl p-4">
