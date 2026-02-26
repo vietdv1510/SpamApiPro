@@ -591,10 +591,21 @@ impl LoadTestEngine {
                     let now_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
 
                     let builder = match config.method.to_uppercase().as_str() {
+                        "GET" => client.get(&config.url),
                         "POST" => client.post(&config.url),
+                        "PUT" => client.put(&config.url),
+                        "DELETE" => client.delete(&config.url),
+                        "PATCH" => client.patch(&config.url),
                         _ => client.get(&config.url),
                     };
-                    // ... (hàm thực thi request tương tự run_constant nhưng rút gọn)
+                    let mut builder = builder;
+                    for (k, v) in &config.headers {
+                        builder = builder.header(k, v);
+                    }
+                    if let Some(b) = &config.body {
+                        builder = builder.body(b.clone());
+                    }
+
                     let request = builder.build().unwrap();
                     let result = tokio::select! {
                         biased;
@@ -603,12 +614,32 @@ impl LoadTestEngine {
                             return;
                         }
                         resp = client.execute(request) => match resp {
-                            Ok(r) => { 
-                                let status = r.status().as_u16();
+                            Ok(response) => { 
+                                let status = response.status().as_u16();
+                                let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+                                
+                                let body_bytes = tokio::select! {
+                                    biased;
+                                    _ = cancel.cancelled() => {
+                                        cancelled_count.fetch_add(1, Ordering::Relaxed);
+                                        return;
+                                    }
+                                    b = response.bytes() => b.unwrap_or_default()
+                                };
+
+                                let success = status >= 200 && status < 300;
                                 RequestResult {
-                                    id, success: status < 400, status_code: Some(status),
-                                    latency_ms: start.elapsed().as_secs_f64()*1000.0,
-                                    error: None, response_size_bytes: 0, timestamp_ms: now_epoch, response_body: None
+                                    id,
+                                    success,
+                                    status_code: Some(status),
+                                    latency_ms,
+                                    error: if success { None } else { Some(format!("HTTP {}", status)) },
+                                    response_size_bytes: body_bytes.len(),
+                                    timestamp_ms: now_epoch,
+                                    response_body: if body_bytes.is_empty() { None } else {
+                                        let cap = body_bytes.len().min(BODY_PREVIEW_BYTES);
+                                        Some(String::from_utf8_lossy(&body_bytes[..cap]).into_owned())
+                                    },
                                 }
                             },
                             Err(e) => RequestResult {
@@ -707,17 +738,28 @@ impl LoadTestEngine {
                                 Ok(r) => (r.status().is_success(), Some(r.status().as_u16())),
                                 Err(_) => (false, None),
                             };
-                            let mut b_size = 0;
+                            let mut body_bytes = bytes::Bytes::new();
                             if let Ok(r) = resp {
-                                b_size = tokio::select! {
+                                body_bytes = tokio::select! {
                                     biased;
-                                    _ = cancel.cancelled() => 0,
-                                    b = r.bytes() => b.map(|b| b.len()).unwrap_or(0)
+                                    _ = cancel.cancelled() => bytes::Bytes::new(),
+                                    b = r.bytes() => b.unwrap_or_default()
                                 };
                             }
+                            let body_preview = if body_bytes.is_empty() { None } else {
+                                let cap = body_bytes.len().min(BODY_PREVIEW_BYTES);
+                                Some(String::from_utf8_lossy(&body_bytes[..cap]).into_owned())
+                            };
+
                             let res = RequestResult {
-                                id, success: is_ok, status_code: status, latency_ms: start.elapsed().as_secs_f64()*1000.0,
-                                error: if is_ok { None } else { Some("Error".to_string()) }, response_size_bytes: b_size, timestamp_ms: 0, response_body: None
+                                id, 
+                                success: is_ok, 
+                                status_code: status, 
+                                latency_ms: start.elapsed().as_secs_f64()*1000.0,
+                                error: if is_ok { None } else { Some("Error".to_string()) }, 
+                                response_size_bytes: body_bytes.len(), 
+                                timestamp_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64, 
+                                response_body: body_preview
                             };
                             (is_ok, res)
                         }

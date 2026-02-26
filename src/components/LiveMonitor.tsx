@@ -4,7 +4,7 @@ import { useAppStore, RequestResult } from "../store";
 export function LiveMonitor() {
   const { runStatus, progress, liveTimeline, liveCounters, config } =
     useAppStore();
-  const isRunning = runStatus === "running";
+  const isRunning = runStatus === "running" || runStatus === "cancelling";
   const total = config.virtual_users;
   const { done, success, errors, totalLatency } = liveCounters;
   const avgLatency = done > 0 ? totalLatency / done : 0;
