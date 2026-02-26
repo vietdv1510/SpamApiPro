@@ -738,18 +738,24 @@ impl LoadTestEngine {
                                 Ok(r) => (r.status().is_success(), Some(r.status().as_u16())),
                                 Err(_) => (false, None),
                             };
-                            let mut body_bytes = bytes::Bytes::new();
+                            let mut body_len = 0;
+                            let mut body_preview = None;
+
                             if let Ok(r) = resp {
-                                body_bytes = tokio::select! {
+                                let body_res = tokio::select! {
                                     biased;
-                                    _ = cancel.cancelled() => bytes::Bytes::new(),
-                                    b = r.bytes() => b.unwrap_or_default()
+                                    _ = cancel.cancelled() => None,
+                                    b = r.bytes() => b.ok()
                                 };
+                                
+                                if let Some(bytes) = body_res {
+                                    body_len = bytes.len();
+                                    if !bytes.is_empty() {
+                                        let cap = bytes.len().min(BODY_PREVIEW_BYTES);
+                                        body_preview = Some(String::from_utf8_lossy(&bytes[..cap]).into_owned());
+                                    }
+                                }
                             }
-                            let body_preview = if body_bytes.is_empty() { None } else {
-                                let cap = body_bytes.len().min(BODY_PREVIEW_BYTES);
-                                Some(String::from_utf8_lossy(&body_bytes[..cap]).into_owned())
-                            };
 
                             let res = RequestResult {
                                 id, 
@@ -757,7 +763,7 @@ impl LoadTestEngine {
                                 status_code: status, 
                                 latency_ms: start.elapsed().as_secs_f64()*1000.0,
                                 error: if is_ok { None } else { Some("Error".to_string()) }, 
-                                response_size_bytes: body_bytes.len(), 
+                                response_size_bytes: body_len, 
                                 timestamp_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64, 
                                 response_body: body_preview
                             };
