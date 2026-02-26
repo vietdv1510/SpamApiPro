@@ -54,6 +54,7 @@ export function useTestRunner() {
 
   const stop = useCallback(async () => {
     try {
+      useAppStore.setState({ runStatus: "cancelling" });
       await stopTest();
     } catch {
       // Test may have already finished

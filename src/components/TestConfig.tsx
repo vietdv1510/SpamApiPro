@@ -36,7 +36,7 @@ export function TestConfig() {
   } = useAppStore();
 
   const { run, stop, importCurl } = useTestRunner();
-  const isRunning = runStatus === "running";
+  const isRunning = runStatus === "running" || runStatus === "cancelling";
   const curlRef = useRef<HTMLTextAreaElement>(null);
   const [editingUsers, setEditingUsers] = useState(false);
   const [usersInput, setUsersInput] = useState(String(config.virtual_users));
@@ -422,7 +422,12 @@ export function TestConfig() {
           {MODES.map((m) => (
             <button
               key={m.value}
-              onClick={() => setConfig({ mode: m.value })}
+              onClick={() => {
+                setConfig({ mode: m.value });
+                if (m.value !== "burst" && !config.duration_secs) {
+                  setConfig({ duration_secs: 10 });
+                }
+              }}
               className={`py-2 px-1 rounded-lg border text-center transition-all ${
                 config.mode === m.value
                   ? "border-primary bg-primary/10"
@@ -441,6 +446,29 @@ export function TestConfig() {
           ))}
         </div>
 
+        {config.mode !== "burst" && (
+          <div className="bg-bg-700/50 rounded-xl p-3 border border-bg-500/50 flex items-center justify-between">
+            <div>
+              <div className="text-xs font-semibold text-gray-300">
+                Duration (seconds)
+              </div>
+              <div className="text-[10px] text-gray-500">
+                Run test for a specific time
+              </div>
+            </div>
+            <input
+              type="number"
+              value={config.duration_secs || 10}
+              onChange={(e) =>
+                setConfig({ duration_secs: Number(e.target.value) })
+              }
+              min={1}
+              max={3600}
+              className="w-20 bg-bg-800 border border-bg-600 rounded-lg px-3 py-1.5 text-primary font-mono font-bold text-sm text-right focus:outline-none focus:border-primary/60"
+            />
+          </div>
+        )}
+
         {runError && (
           <div className="bg-red-500/10 border border-red-500/40 rounded-xl px-3 py-2 text-red-400 text-xs">
             ⚠️ {runError}
@@ -450,16 +478,29 @@ export function TestConfig() {
         {/* Run / Stop Buttons */}
         {isRunning ? (
           <button
-            onClick={stop}
-            className="w-full py-3 rounded-2xl font-bold text-sm bg-gradient-to-r from-red-600 to-red-500 text-white hover:opacity-90 active:scale-95 transition-all shadow-lg"
+            onClick={runStatus === "cancelling" ? undefined : stop}
+            disabled={runStatus === "cancelling"}
+            className={`w-full py-3 rounded-2xl font-bold text-sm text-white transition-all shadow-lg ${
+              runStatus === "cancelling"
+                ? "bg-amber-600 hover:opacity-100 cursor-not-allowed"
+                : "bg-gradient-to-r from-red-600 to-red-500 hover:opacity-90 active:scale-95"
+            }`}
             style={{
               boxShadow:
-                "0 0 30px rgba(239,68,68,0.3), 0 0 60px rgba(239,68,68,0.15)",
+                runStatus === "cancelling"
+                  ? "0 0 20px rgba(217,119,6,0.3)"
+                  : "0 0 30px rgba(239,68,68,0.3), 0 0 60px rgba(239,68,68,0.15)",
             }}
           >
             <span className="flex items-center justify-center gap-2">
-              <span className="w-4 h-4 border-2 border-red-300 border-t-white rounded-full animate-spin" />
-              ⏹ Stop Test
+              <span
+                className={`w-4 h-4 border-2 rounded-full animate-spin ${
+                  runStatus === "cancelling"
+                    ? "border-amber-300 border-t-white"
+                    : "border-red-300 border-t-white"
+                }`}
+              />
+              {runStatus === "cancelling" ? "⏹ Stopping..." : "⏹ Stop Test"}
             </span>
           </button>
         ) : (
@@ -480,7 +521,10 @@ export function TestConfig() {
                   }
             }
           >
-            🚀 Fire {config.virtual_users.toLocaleString()} Requests
+            🚀{" "}
+            {config.mode === "burst"
+              ? `Fire ${config.virtual_users.toLocaleString()} Requests`
+              : `Start Test (${config.duration_secs || 10}s) - ${config.virtual_users.toLocaleString()} VUs`}
           </button>
         )}
       </div>

@@ -35,7 +35,7 @@ pub async fn run_load_test(
     let app_clone = app.clone();
 
     let result = engine
-        .run_burst(config, cancel, move |progress, req_result| {
+        .run(config, cancel, move |progress, req_result| {
             let _ = app_clone.emit(
                 "test_progress",
                 serde_json::json!({

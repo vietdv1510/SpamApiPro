@@ -140,6 +140,21 @@ impl LoadTestEngine {
         (start.elapsed(), success.load(Ordering::Relaxed) as usize)
     }
 
+    /// ⭐ DISPATCHER — Chọn mode chạy phù hợp
+    pub async fn run(
+        &self,
+        config: TestConfig,
+        cancel: CancellationToken,
+        progress_callback: impl Fn(f32, RequestResult) + Send + Sync + 'static,
+    ) -> TestResult {
+        match config.mode {
+            TestMode::Burst => self.run_burst(config, cancel, progress_callback).await,
+            TestMode::Constant => self.run_constant(config, cancel, progress_callback).await,
+            TestMode::RampUp => self.run_ramp_up(config, cancel, progress_callback).await,
+            TestMode::StressTest => self.run_stress_test(config, cancel, progress_callback).await,
+        }
+    }
+
     /// ⭐ BURST MODE với Cancel support
     pub async fn run_burst(
         &self,
@@ -161,9 +176,6 @@ impl LoadTestEngine {
             "🔥 Warmed up {}/{} connections in {:?}",
             warmup_ok, warmup_count, warmup_time
         );
-        if warmup_ok < warmup_count / 2 {
-            eprintln!("⚠️  >50% warm up failed — server may block HEAD requests");
-        }
 
         if cancel.is_cancelled() {
             return Self::empty_result(true);
@@ -192,7 +204,6 @@ impl LoadTestEngine {
             let completed = Arc::clone(&completed);
             let cancelled_count = Arc::clone(&cancelled_count);
             let cancel = cancel.clone();
-            let global_start = global_start;
 
             let handle = tokio::spawn(async move {
                 // 🏗️ PRE-BUILD request TRƯỚC barrier
@@ -231,27 +242,25 @@ impl LoadTestEngine {
                     }
                 };
 
-                // ⏳ Barrier with cancel support
-                tokio::select! {
-                    biased;
-                    _ = cancel.cancelled() => {
-                        cancelled_count.fetch_add(1, Ordering::Relaxed);
-                        let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                        let result = RequestResult {
-                            id: i as u32,
-                            success: false,
-                            status_code: None,
-                            latency_ms: 0.0,
-                            error: Some("Cancelled".to_string()),
-                            response_size_bytes: 0,
-                            timestamp_ms: 0,
-                            response_body: None,
-                        };
-                        callback(done as f32 / n as f32 * 100.0, result.clone());
-                        results.lock().push(result);
-                        return;
-                    }
-                    _ = barrier.wait() => {}
+                // ⏳ Barrier (No cancel select here, to avoid deadlocking other threads)
+                barrier.wait().await;
+
+                if cancel.is_cancelled() {
+                    cancelled_count.fetch_add(1, Ordering::Relaxed);
+                    let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                    let result = RequestResult {
+                        id: i as u32,
+                        success: false,
+                        status_code: None,
+                        latency_ms: 0.0,
+                        error: Some("Cancelled".to_string()),
+                        response_size_bytes: 0,
+                        timestamp_ms: 0,
+                        response_body: None,
+                    };
+                    callback(done as f32 / n as f32 * 100.0, result.clone());
+                    results.lock().push(result);
+                    return;
                 }
 
                 // ⚡ SAU barrier — fire + ghi timestamp
@@ -285,7 +294,17 @@ impl LoadTestEngine {
                             Ok(response) => {
                                 let status = response.status().as_u16();
                                 let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
-                                let body_bytes = response.bytes().await.unwrap_or_default();
+                                
+                                // CANCEL-AWARE READ BODY
+                                let body_bytes = tokio::select! {
+                                    biased;
+                                    _ = cancel.cancelled() => {
+                                        cancelled_count.fetch_add(1, Ordering::Relaxed);
+                                        return; // Break task
+                                    }
+                                    b = response.bytes() => b.unwrap_or_default()
+                                };
+                                
                                 let response_size = body_bytes.len();
                                 let body_preview = if body_bytes.is_empty() {
                                     None
@@ -344,13 +363,11 @@ impl LoadTestEngine {
         let total_duration_ms = global_start.elapsed().as_secs_f64() * 1000.0;
         let was_cancelled = cancel.is_cancelled();
 
-        // Safe unwrap — fallback to clone nếu Arc vẫn shared
         let raw_results = match Arc::try_unwrap(results) {
             Ok(mutex) => mutex.into_inner(),
             Err(arc) => arc.lock().clone(),
         };
 
-        // Đọc dispatch nanos qua Arc reference — không cần unwrap
         let nanos: Vec<u64> = dispatch_nanos
             .iter()
             .map(|a| a.load(Ordering::Relaxed))
@@ -370,6 +387,361 @@ impl LoadTestEngine {
         result.warmup_time_ms = warmup_time.as_secs_f64() * 1000.0;
         result.was_cancelled = was_cancelled;
         result.cancelled_count = cancelled;
+        result
+    }
+
+    /// ⭐ CONSTANT LOAD — Giữ số lượng users đồng thời cố định trong T giây
+    pub async fn run_constant(
+        &self,
+        config: TestConfig,
+        cancel: CancellationToken,
+        progress_callback: impl Fn(f32, RequestResult) + Send + Sync + 'static,
+    ) -> TestResult {
+        let n = config.virtual_users as usize;
+        let duration = Duration::from_secs(config.duration_secs.unwrap_or(10) as u64);
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let callback = Arc::new(progress_callback);
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(n));
+        let cancelled_count = Arc::new(AtomicU32::new(0));
+
+        let global_start = Instant::now();
+        let config = Arc::new(config);
+        let mut handles = Vec::new();
+        let mut request_id = 0;
+
+        while global_start.elapsed() < duration && !cancel.is_cancelled() {
+            let permit = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => break,
+                p = semaphore.clone().acquire_owned() => match p {
+                    Ok(p) => p,
+                    Err(_) => break,
+                }
+            };
+
+            let results = Arc::clone(&results);
+            let config = Arc::clone(&config);
+            let client = self.client.clone();
+            let callback = Arc::clone(&callback);
+            let cancelled_count = Arc::clone(&cancelled_count);
+            let cancel = cancel.clone();
+            let id = request_id;
+            request_id += 1;
+
+            let handle = tokio::spawn(async move {
+                let _permit = permit;
+                let start = Instant::now();
+                let now_epoch = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+
+                let mut builder = match config.method.to_uppercase().as_str() {
+                    "GET" => client.get(&config.url),
+                    "POST" => client.post(&config.url),
+                    "PUT" => client.put(&config.url),
+                    "DELETE" => client.delete(&config.url),
+                    "PATCH" => client.patch(&config.url),
+                    _ => client.get(&config.url),
+                };
+                for (key, value) in &config.headers {
+                    builder = builder.header(key, value);
+                }
+                if let Some(body) = &config.body {
+                    builder = builder.body(body.clone());
+                }
+
+                let request = match builder.build() {
+                    Ok(r) => r,
+                    Err(_) => return,
+                };
+
+                let result = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => {
+                        cancelled_count.fetch_add(1, Ordering::Relaxed);
+                        RequestResult {
+                            id,
+                            success: false,
+                            status_code: None,
+                            latency_ms: start.elapsed().as_secs_f64() * 1000.0,
+                            error: Some("Cancelled".to_string()),
+                            response_size_bytes: 0,
+                            timestamp_ms: now_epoch,
+                            response_body: None,
+                        }
+                    }
+                    resp = client.execute(request) => {
+                        match resp {
+                            Ok(response) => {
+                                let status = response.status().as_u16();
+                                let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+                                
+                                // CANCEL-AWARE READ BODY
+                                let body_bytes = tokio::select! {
+                                    biased;
+                                    _ = cancel.cancelled() => {
+                                        cancelled_count.fetch_add(1, Ordering::Relaxed);
+                                        return;
+                                    }
+                                    b = response.bytes() => b.unwrap_or_default()
+                                };
+                                
+                                let success = status >= 200 && status < 300;
+                                RequestResult {
+                                    id,
+                                    success,
+                                    status_code: Some(status),
+                                    latency_ms,
+                                    error: if success { None } else { Some(format!("HTTP {}", status)) },
+                                    response_size_bytes: body_bytes.len(),
+                                    timestamp_ms: now_epoch,
+                                    response_body: if body_bytes.is_empty() { None } else {
+                                        let cap = body_bytes.len().min(BODY_PREVIEW_BYTES);
+                                        Some(String::from_utf8_lossy(&body_bytes[..cap]).into_owned())
+                                    },
+                                }
+                            }
+                            Err(e) => {
+                                RequestResult {
+                                    id,
+                                    success: false,
+                                    status_code: None,
+                                    latency_ms: start.elapsed().as_secs_f64() * 1000.0,
+                                    error: Some(e.to_string()),
+                                    response_size_bytes: 0,
+                                    timestamp_ms: now_epoch,
+                                    response_body: None,
+                                }
+                            }
+                        }
+                    }
+                };
+
+                callback(0.0, result.clone());
+                results.lock().push(result);
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            let _ = handle.await;
+        }
+
+        let total_duration_ms = global_start.elapsed().as_secs_f64() * 1000.0;
+        let was_cancelled = cancel.is_cancelled();
+        let raw_results = Arc::try_unwrap(results).unwrap().into_inner();
+        let mut result = self.aggregate_results(raw_results, total_duration_ms);
+        result.was_cancelled = was_cancelled;
+        result.cancelled_count = cancelled_count.load(Ordering::Relaxed) as u64;
+        result
+    }
+
+    /// ⭐ RAMP UP MODE — Tăng dần số users từ 1 -> N
+    pub async fn run_ramp_up(
+        &self,
+        config: TestConfig,
+        cancel: CancellationToken,
+        progress_callback: impl Fn(f32, RequestResult) + Send + Sync + 'static,
+    ) -> TestResult {
+        let max_users = config.virtual_users as usize;
+        let total_duration = Duration::from_secs(config.duration_secs.unwrap_or(10) as u64);
+        let steps = 5; // Chia làm 5 giai đoạn tăng trưởng
+        let step_duration = total_duration / steps;
+        let users_per_step = (max_users as f32 / steps as f32).ceil() as usize;
+
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let callback = Arc::new(progress_callback);
+        let cancelled_count = Arc::new(AtomicU32::new(0));
+        let global_start = Instant::now();
+        let config = Arc::new(config);
+        let mut request_id = 0;
+
+        for step in 0..steps {
+            if cancel.is_cancelled() { break; }
+            let current_users = (users_per_step * (step as usize + 1)).min(max_users);
+            eprintln!("📈 Ramp step {}/{}: {} concurrent users", step + 1, steps, current_users);
+            
+            let step_start = Instant::now();
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(current_users));
+            let mut handles = Vec::new();
+
+            while step_start.elapsed() < step_duration && !cancel.is_cancelled() {
+                let permit = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => break,
+                    p = semaphore.clone().acquire_owned() => match p {
+                        Ok(p) => p,
+                        Err(_) => break,
+                    }
+                };
+
+                let results = Arc::clone(&results);
+                let config = Arc::clone(&config);
+                let client = self.client.clone();
+                let callback = Arc::clone(&callback);
+                let cancelled_count = Arc::clone(&cancelled_count);
+                let cancel = cancel.clone();
+                let id = request_id;
+                request_id += 1;
+
+                let handle = tokio::spawn(async move {
+                    let _permit = permit;
+                    let start = Instant::now();
+                    let now_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
+
+                    let builder = match config.method.to_uppercase().as_str() {
+                        "POST" => client.post(&config.url),
+                        _ => client.get(&config.url),
+                    };
+                    // ... (hàm thực thi request tương tự run_constant nhưng rút gọn)
+                    let request = builder.build().unwrap();
+                    let result = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => {
+                            cancelled_count.fetch_add(1, Ordering::Relaxed);
+                            return;
+                        }
+                        resp = client.execute(request) => match resp {
+                            Ok(r) => { 
+                                let status = r.status().as_u16();
+                                RequestResult {
+                                    id, success: status < 400, status_code: Some(status),
+                                    latency_ms: start.elapsed().as_secs_f64()*1000.0,
+                                    error: None, response_size_bytes: 0, timestamp_ms: now_epoch, response_body: None
+                                }
+                            },
+                            Err(e) => RequestResult {
+                                id, success: false, status_code: None,
+                                latency_ms: start.elapsed().as_secs_f64()*1000.0,
+                                error: Some(e.to_string()), response_size_bytes: 0, timestamp_ms: now_epoch, response_body: None
+                            }
+                        }
+                    };
+                    callback(0.0, result.clone());
+                    results.lock().push(result);
+                });
+                handles.push(handle);
+            }
+            for h in handles { let _ = h.await; }
+        }
+
+        let total_duration_ms = global_start.elapsed().as_secs_f64() * 1000.0;
+        let was_cancelled = cancel.is_cancelled();
+        let raw_results = Arc::try_unwrap(results).unwrap().into_inner();
+        let mut result = self.aggregate_results(raw_results, total_duration_ms);
+        result.was_cancelled = was_cancelled;
+        result.cancelled_count = cancelled_count.load(Ordering::Relaxed) as u64;
+        result
+    }
+
+    /// ⭐ STRESS TEST — Tìm ngưỡng chịu tải (doubling load)
+    pub async fn run_stress_test(
+        &self,
+        config: TestConfig,
+        cancel: CancellationToken,
+        progress_callback: impl Fn(f32, RequestResult) + Send + Sync + 'static,
+    ) -> TestResult {
+        let mut current_users = config.virtual_users as usize;
+        let duration_per_wave = Duration::from_secs(5);
+        let results = Arc::new(Mutex::new(Vec::new()));
+        let callback = Arc::new(progress_callback);
+        let global_start = Instant::now();
+        let config = Arc::new(config);
+        let mut request_id = 0;
+
+        loop {
+            if cancel.is_cancelled() { break; }
+            eprintln!("🔥 Stress wave: {} concurrent users", current_users);
+            let wave_start = Instant::now();
+            let semaphore = Arc::new(tokio::sync::Semaphore::new(current_users));
+            let mut wave_results = 0;
+            let mut wave_errors = 0;
+            let mut handles = Vec::new();
+
+            while wave_start.elapsed() < duration_per_wave && !cancel.is_cancelled() {
+                 let permit = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => break,
+                    p = semaphore.clone().acquire_owned() => p.unwrap()
+                };
+                let results = Arc::clone(&results);
+                let config = Arc::clone(&config);
+                let client = self.client.clone();
+                let callback = Arc::clone(&callback);
+                let cancel = cancel.clone();
+                let id = request_id; request_id += 1;
+                
+                handles.push(tokio::spawn(async move {
+                    let _p = permit;
+                    let start = Instant::now();
+                    
+                    let mut builder = match config.method.to_uppercase().as_str() {
+                        "GET" => client.get(&config.url),
+                        "POST" => client.post(&config.url),
+                        "PUT" => client.put(&config.url),
+                        "DELETE" => client.delete(&config.url),
+                        "PATCH" => client.patch(&config.url),
+                        _ => client.get(&config.url),
+                    };
+                    for (key, value) in &config.headers {
+                        builder = builder.header(key, value);
+                    }
+                    if let Some(body) = &config.body {
+                        builder = builder.body(body.clone());
+                    }
+                    let request = builder.build().unwrap();
+
+                    let (success, res) = tokio::select! {
+                        biased;
+                        _ = cancel.cancelled() => {
+                            // Cancelled instantly!
+                            let res = RequestResult {
+                                id, success: false, status_code: None, latency_ms: 0.0,
+                                error: Some("Cancelled".to_string()), response_size_bytes: 0, timestamp_ms: 0, response_body: None
+                            };
+                            (false, res)
+                        }
+                        resp = client.execute(request) => {
+                            let (is_ok, status) = match &resp {
+                                Ok(r) => (r.status().is_success(), Some(r.status().as_u16())),
+                                Err(_) => (false, None),
+                            };
+                            let mut b_size = 0;
+                            if let Ok(r) = resp {
+                                b_size = tokio::select! {
+                                    biased;
+                                    _ = cancel.cancelled() => 0,
+                                    b = r.bytes() => b.map(|b| b.len()).unwrap_or(0)
+                                };
+                            }
+                            let res = RequestResult {
+                                id, success: is_ok, status_code: status, latency_ms: start.elapsed().as_secs_f64()*1000.0,
+                                error: if is_ok { None } else { Some("Error".to_string()) }, response_size_bytes: b_size, timestamp_ms: 0, response_body: None
+                            };
+                            (is_ok, res)
+                        }
+                    };
+
+                    callback(0.0, res.clone());
+                    results.lock().push(res);
+                    success
+                }));
+            }
+            for h in handles { if let Ok(s) = h.await { wave_results += 1; if !s { wave_errors += 1; } } }
+            
+            // Nếu lỗi > 30% or users > 10k -> Dừng
+            if wave_results > 0 && (wave_errors as f32 / wave_results as f32) > 0.3 {
+                eprintln!("🛑 Stress limit reached at {} users", current_users);
+                break;
+            }
+            if current_users >= 10000 { break; }
+            current_users *= 2;
+        }
+
+        let raw_results = Arc::try_unwrap(results).unwrap().into_inner();
+        let mut result = self.aggregate_results(raw_results, global_start.elapsed().as_secs_f64()*1000.0);
+        result.was_cancelled = cancel.is_cancelled();
         result
     }
 

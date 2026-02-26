@@ -63,6 +63,7 @@ export type AppTab = "test" | "results" | "history";
 export type RunStatus =
   | "idle"
   | "running"
+  | "cancelling"
   | "completed"
   | "error"
   | "cancelled";

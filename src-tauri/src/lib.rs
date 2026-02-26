@@ -5,7 +5,7 @@ use commands::{parse_curl, run_load_test, stop_test, AppState};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    if let Err(e) = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .manage(AppState::new())
         .invoke_handler(tauri::generate_handler![
@@ -14,5 +14,7 @@ pub fn run() {
             stop_test,
         ])
         .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    {
+        eprintln!("🛑 Fatal error while running tauri application: {}", e);
+    }
 }
