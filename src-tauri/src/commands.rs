@@ -1,5 +1,7 @@
+use crate::db::{Database, HistoryEntry};
 use crate::engine::{LoadTestEngine, TestConfig, TestResult};
 use parking_lot::Mutex;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 use tokio_util::sync::CancellationToken;
@@ -7,13 +9,15 @@ use tokio_util::sync::CancellationToken;
 /// Shared application state — quản lý cancel token
 pub struct AppState {
     pub cancel_token: Arc<Mutex<Option<CancellationToken>>>,
+    pub db: Database,
 }
 
 impl AppState {
-    pub fn new() -> Self {
-        Self {
+    pub fn new(db_path: PathBuf) -> Result<Self, String> {
+        Ok(Self {
             cancel_token: Arc::new(Mutex::new(None)),
-        }
+            db: Database::open(db_path)?,
+        })
     }
 }
 
@@ -119,9 +123,49 @@ pub async fn stop_test(state: State<'_, AppState>) -> Result<(), String> {
         cancel.cancel();
         Ok(())
     } else {
-        // Không có test nào đang chạy — vẫn trả OK để frontend không bị lỗi
         Ok(())
     }
+}
+
+// ─── SQLite History Commands ───
+
+#[derive(serde::Deserialize)]
+pub struct SaveHistoryPayload {
+    pub timestamp: String,
+    pub url: String,
+    pub method: String,
+    pub mode: String,
+    pub virtual_users: u32,
+    pub config_json: String,
+    pub result_json: String,
+}
+
+#[tauri::command]
+pub fn get_history(state: State<'_, AppState>, limit: Option<u32>) -> Result<Vec<HistoryEntry>, String> {
+    state.db.get_history(limit.unwrap_or(50))
+}
+
+#[tauri::command]
+pub fn save_history(state: State<'_, AppState>, payload: SaveHistoryPayload) -> Result<i64, String> {
+    state.db.save_history(
+        &payload.timestamp,
+        &payload.url,
+        &payload.method,
+        &payload.mode,
+        payload.virtual_users,
+        &payload.config_json,
+        &payload.result_json,
+    )
+}
+
+#[tauri::command]
+pub fn delete_history(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    state.db.delete_history(id)
+}
+
+#[tauri::command]
+pub fn clear_all_history(state: State<'_, AppState>) -> Result<(), String> {
+    state.db.clear_history()
 }
 
 /// Tokenize curl command — respects single/double quoted strings

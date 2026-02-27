@@ -13,20 +13,17 @@ let currentRunGeneration = 0;
 /**
  * Run load test với batched progress events.
  * Dùng setTimeout(16ms) để gom events → giảm re-renders từ 10K+ xuống ~600
- * (Không dùng requestAnimationFrame vì macOS WebKit bug đóng băng khi mất displayID)
  */
 export async function runLoadTest(
   config: TestConfig,
   onBatch: BatchProgressCallback,
 ): Promise<TestResult> {
-  // Tăng generation — vô hiệu hóa mọi callback từ run cũ
   const thisGeneration = ++currentRunGeneration;
 
   let buffer: Array<{ progress: number; result: RequestResult }> = [];
   let timerId: ReturnType<typeof setTimeout> | null = null;
 
   const flush = () => {
-    // ⚡ CRITICAL: Chỉ flush nếu đây vẫn là run hiện tại
     if (thisGeneration !== currentRunGeneration) {
       buffer = [];
       timerId = null;
@@ -46,18 +43,16 @@ export async function runLoadTest(
   const unlisten = await listen<{ progress: number; result: RequestResult }>(
     "test_progress",
     (event) => {
-      // Bỏ qua events từ run cũ
       if (thisGeneration !== currentRunGeneration) return;
       buffer.push(event.payload);
       if (timerId === null) {
-        timerId = setTimeout(flush, 16); // 16ms = ~60fps
+        timerId = setTimeout(flush, 16);
       }
     },
   );
 
   try {
     const result = await invoke<TestResult>("run_load_test", { config });
-    // Flush remaining buffered events (chỉ nếu vẫn là run hiện tại)
     if (timerId !== null) clearTimeout(timerId);
     if (buffer.length > 0 && thisGeneration === currentRunGeneration) flush();
     return result;
@@ -73,4 +68,45 @@ export async function parseCurl(curlCommand: string): Promise<TestConfig> {
 /** Dừng test đang chạy */
 export async function stopTest(): Promise<void> {
   await invoke("stop_test");
+}
+
+// ─── SQLite History API ───
+
+export interface HistoryEntry {
+  id: number;
+  timestamp: string;
+  url: string;
+  method: string;
+  mode: string;
+  virtual_users: number;
+  config_json: string;
+  result_json: string;
+}
+
+/** Lấy lịch sử test từ SQLite */
+export async function getHistory(limit = 50): Promise<HistoryEntry[]> {
+  return await invoke<HistoryEntry[]>("get_history", { limit });
+}
+
+/** Lưu kết quả test vào SQLite */
+export async function saveHistory(payload: {
+  timestamp: string;
+  url: string;
+  method: string;
+  mode: string;
+  virtual_users: number;
+  config_json: string;
+  result_json: string;
+}): Promise<number> {
+  return await invoke<number>("save_history", { payload });
+}
+
+/** Xóa 1 entry history */
+export async function deleteHistoryEntry(id: number): Promise<void> {
+  await invoke("delete_history", { id });
+}
+
+/** Xóa toàn bộ history */
+export async function clearAllHistory(): Promise<void> {
+  await invoke("clear_all_history");
 }

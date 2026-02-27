@@ -1,0 +1,135 @@
+use rusqlite::{Connection, params};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::Arc;
+use parking_lot::Mutex;
+
+/// Một entry trong bảng test_history
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryEntry {
+    pub id: i64,
+    pub timestamp: String,
+    pub url: String,
+    pub method: String,
+    pub mode: String,
+    pub virtual_users: u32,
+    pub config_json: String,
+    pub result_json: String,
+}
+
+/// Database wrapper — thread-safe
+pub struct Database {
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl Database {
+    /// Mở hoặc tạo database tại đường dẫn chỉ định
+    pub fn open(db_path: PathBuf) -> Result<Self, String> {
+        // Tạo thư mục cha nếu chưa có
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Cannot create DB directory: {}", e))?;
+        }
+
+        let conn = Connection::open(&db_path)
+            .map_err(|e| format!("Cannot open SQLite DB: {}", e))?;
+
+        // WAL mode — tăng performance cho concurrent reads
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL;")
+            .map_err(|e| format!("PRAGMA error: {}", e))?;
+
+        // Tạo bảng nếu chưa có
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS test_history (
+                id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp     TEXT NOT NULL,
+                url           TEXT NOT NULL,
+                method        TEXT NOT NULL,
+                mode          TEXT NOT NULL,
+                virtual_users INTEGER NOT NULL,
+                config_json   TEXT NOT NULL,
+                result_json   TEXT NOT NULL,
+                created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+            [],
+        )
+        .map_err(|e| format!("Cannot create table: {}", e))?;
+
+        eprintln!("📦 [DB] SQLite opened at {:?}", db_path);
+        Ok(Self {
+            conn: Arc::new(Mutex::new(conn)),
+        })
+    }
+
+    /// Lưu một kết quả test vào history
+    pub fn save_history(
+        &self,
+        timestamp: &str,
+        url: &str,
+        method: &str,
+        mode: &str,
+        virtual_users: u32,
+        config_json: &str,
+        result_json: &str,
+    ) -> Result<i64, String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO test_history (timestamp, url, method, mode, virtual_users, config_json, result_json)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![timestamp, url, method, mode, virtual_users, config_json, result_json],
+        )
+        .map_err(|e| format!("Insert error: {}", e))?;
+
+        Ok(conn.last_insert_rowid())
+    }
+
+    /// Lấy toàn bộ history (mới nhất trước)
+    pub fn get_history(&self, limit: u32) -> Result<Vec<HistoryEntry>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare(
+                "SELECT id, timestamp, url, method, mode, virtual_users, config_json, result_json
+                 FROM test_history
+                 ORDER BY id DESC
+                 LIMIT ?1",
+            )
+            .map_err(|e| format!("Prepare error: {}", e))?;
+
+        let rows = stmt
+            .query_map(params![limit], |row| {
+                Ok(HistoryEntry {
+                    id: row.get(0)?,
+                    timestamp: row.get(1)?,
+                    url: row.get(2)?,
+                    method: row.get(3)?,
+                    mode: row.get(4)?,
+                    virtual_users: row.get(5)?,
+                    config_json: row.get(6)?,
+                    result_json: row.get(7)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {}", e))?;
+
+        let mut entries = Vec::new();
+        for row in rows {
+            entries.push(row.map_err(|e| format!("Row error: {}", e))?);
+        }
+        Ok(entries)
+    }
+
+    /// Xóa một entry theo ID
+    pub fn delete_history(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM test_history WHERE id = ?1", params![id])
+            .map_err(|e| format!("Delete error: {}", e))?;
+        Ok(())
+    }
+
+    /// Xóa toàn bộ history
+    pub fn clear_history(&self) -> Result<(), String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM test_history", [])
+            .map_err(|e| format!("Clear error: {}", e))?;
+        Ok(())
+    }
+}

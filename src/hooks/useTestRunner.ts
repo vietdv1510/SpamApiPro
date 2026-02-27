@@ -1,6 +1,12 @@
 import { useCallback } from "react";
-import { useAppStore } from "../store";
-import { runLoadTest, parseCurl, stopTest } from "../tauri";
+import { useAppStore, type HistoryItem } from "../store";
+import {
+  runLoadTest,
+  parseCurl,
+  stopTest,
+  saveHistory,
+  getHistory,
+} from "../tauri";
 
 /** Validate URL format */
 function isValidUrl(url: string): boolean {
@@ -14,18 +20,15 @@ function isValidUrl(url: string): boolean {
 
 export function useTestRunner() {
   const run = useCallback(async () => {
-    console.log("[run] START");
     const state = useAppStore.getState();
     const { config, getEffectiveHeaders } = state;
 
     if (!isValidUrl(config.url)) {
-      console.log("[run] Invalid URL");
       useAppStore.setState({ runStatus: "error" });
       return { error: "Invalid URL — must start with http:// or https://" };
     }
 
-    // Reset hoàn toàn state trong 1 lần set() duy nhất — atomic, không bị batch lẫn
-    console.log("[run] Resetting state...");
+    // Reset state
     useAppStore.setState({
       runStatus: "running",
       activeTab: "test",
@@ -42,9 +45,7 @@ export function useTestRunner() {
     };
 
     try {
-      console.log("[run] Calling runLoadTest...");
       const result = await runLoadTest(effectiveConfig, (progress, batch) => {
-        // Chỉ cập nhật nếu vẫn đang running
         const currentStatus = useAppStore.getState().runStatus;
         if (currentStatus === "running" || currentStatus === "cancelling") {
           useAppStore.getState().setProgress(progress);
@@ -52,12 +53,27 @@ export function useTestRunner() {
         }
       });
 
-      console.log(
-        "[run] runLoadTest resolved, result.total_requests =",
-        result.total_requests,
-      );
       useAppStore.getState().setCurrentResult(result);
-      useAppStore.getState().addToHistory(effectiveConfig, result);
+
+      // ⚡ Lưu vào SQLite — strip timeline để tiết kiệm dung lượng
+      try {
+        const strippedResult = { ...result, timeline: [] };
+        await saveHistory({
+          timestamp: new Date().toLocaleTimeString("vi-VN"),
+          url: effectiveConfig.url,
+          method: effectiveConfig.method,
+          mode: effectiveConfig.mode,
+          virtual_users: effectiveConfig.virtual_users,
+          config_json: JSON.stringify(effectiveConfig),
+          result_json: JSON.stringify(strippedResult),
+        });
+
+        // Reload history từ SQLite
+        await loadHistoryFromDB();
+      } catch (dbErr) {
+        console.warn("[run] Failed to save history to SQLite:", dbErr);
+      }
+
       useAppStore.setState({
         runStatus: result.was_cancelled ? "cancelled" : "completed",
         activeTab: "results",
@@ -79,7 +95,6 @@ export function useTestRunner() {
       useAppStore.setState({ runStatus: "cancelling" });
       await stopTest();
     } catch {
-      // Nếu stop thất bại, reset status để user có thể thao tác tiếp
       const stillCancelling = useAppStore.getState().runStatus === "cancelling";
       if (stillCancelling) {
         useAppStore.setState({ runStatus: "cancelled" });
@@ -98,4 +113,24 @@ export function useTestRunner() {
   }, []);
 
   return { run, stop, importCurl };
+}
+
+/** Load history từ SQLite → Zustand store */
+export async function loadHistoryFromDB() {
+  try {
+    const entries = await getHistory(50);
+    const items: HistoryItem[] = entries.map((e) => ({
+      id: e.id,
+      timestamp: e.timestamp,
+      url: e.url,
+      method: e.method,
+      mode: e.mode,
+      virtual_users: e.virtual_users,
+      config: JSON.parse(e.config_json),
+      result: JSON.parse(e.result_json),
+    }));
+    useAppStore.getState().setHistory(items);
+  } catch (err) {
+    console.warn("[loadHistoryFromDB] Error:", err);
+  }
 }

@@ -304,9 +304,22 @@ export function TestConfig() {
             }`}
           >
             <div className="flex items-center justify-between mb-2">
-              <label className="text-xs text-gray-500 font-medium">
-                Requests
-              </label>
+              <div>
+                <label className="text-xs text-gray-500 font-medium">
+                  {config.mode === "burst"
+                    ? "Total Requests"
+                    : "Concurrent Users (VUs)"}
+                </label>
+                <div className="text-[9px] text-gray-600 mt-0.5">
+                  {config.mode === "burst"
+                    ? "Exact number of requests to fire"
+                    : config.mode === "ramp_up"
+                      ? "Peak users — ramps from 20% → 100%"
+                      : config.mode === "stress_test"
+                        ? "Starting users — auto doubles each wave"
+                        : "Users sending requests continuously"}
+                </div>
+              </div>
               {editingUsers ? (
                 <input
                   type="number"
