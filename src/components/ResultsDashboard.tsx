@@ -10,6 +10,7 @@ import {
   Cell,
 } from "recharts";
 import { useAppStore, type TestResult } from "../store";
+import { exportReportHTML } from "../utils/exportReport";
 
 function MetricCard({
   label,
@@ -160,6 +161,21 @@ export function ResultsDashboard() {
 
   return (
     <div className="overflow-y-auto h-full space-y-4 pr-1">
+      {/* Export Button */}
+      <div className="flex justify-end">
+        <button
+          onClick={() =>
+            exportReportHTML(r, {
+              url: useAppStore.getState().config.url,
+              method: useAppStore.getState().config.method,
+              mode: useAppStore.getState().config.mode,
+            })
+          }
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors"
+        >
+          📄 Export Report
+        </button>
+      </div>
       {/* Cancelled Banner */}
       {r.was_cancelled && (
         <div className="bg-amber-500/10 border border-amber-500/40 rounded-xl px-4 py-3 flex items-center gap-2 slide-in">

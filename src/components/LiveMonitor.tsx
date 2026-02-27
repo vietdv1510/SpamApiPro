@@ -1,11 +1,17 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { useAppStore, RequestResult } from "../store";
+
+const MODE_LABELS: Record<string, string> = {
+  burst: "Burst",
+  constant: "Constant Load",
+  ramp_up: "Ramp Up",
+  stress_test: "Stress Test",
+};
 
 export function LiveMonitor() {
   const { runStatus, progress, liveTimeline, liveCounters, config } =
     useAppStore();
   const isRunning = runStatus === "running" || runStatus === "cancelling";
-  const total = config.virtual_users;
   const { done, success, errors, totalLatency } = liveCounters;
   const avgLatency = done > 0 ? totalLatency / done : 0;
 
@@ -13,18 +19,56 @@ export function LiveMonitor() {
     null,
   );
 
+  // Reset selection khi bắt đầu test mới
   useEffect(() => {
     if (runStatus === "running") {
       setSelectedRequest(null);
     }
   }, [runStatus]);
 
+  // Auto-scroll logs
   const logsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (logsRef.current && !selectedRequest) {
       logsRef.current.scrollTop = logsRef.current.scrollHeight;
     }
   }, [liveTimeline, selectedRequest]);
+
+  // ⌨️ Keyboard navigation — Arrow Up/Down chuyển response
+  const containerRef = useRef<HTMLDivElement>(null);
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (liveTimeline.length === 0) return;
+      if (e.key !== "ArrowUp" && e.key !== "ArrowDown" && e.key !== "Escape")
+        return;
+
+      e.preventDefault(); // Ngăn scroll mặc định
+
+      if (e.key === "Escape") {
+        setSelectedRequest(null);
+        return;
+      }
+
+      const currentIdx = selectedRequest
+        ? liveTimeline.findIndex((r) => r.id === selectedRequest.id)
+        : -1;
+
+      let nextIdx: number;
+      if (e.key === "ArrowDown") {
+        nextIdx = currentIdx < liveTimeline.length - 1 ? currentIdx + 1 : 0;
+      } else {
+        nextIdx = currentIdx > 0 ? currentIdx - 1 : liveTimeline.length - 1;
+      }
+
+      const nextReq = liveTimeline[nextIdx];
+      setSelectedRequest(nextReq);
+
+      // Scroll entry đó vào view
+      const el = logsRef.current?.children[nextIdx] as HTMLElement;
+      el?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    },
+    [liveTimeline, selectedRequest],
+  );
 
   if (runStatus === "idle") {
     return (
@@ -40,8 +84,16 @@ export function LiveMonitor() {
     );
   }
 
+  // Tên mode đúng
+  const modeLabel = MODE_LABELS[config.mode] ?? config.mode;
+
   return (
-    <div className="flex flex-col gap-4 h-full">
+    <div
+      ref={containerRef}
+      className="flex flex-col gap-4 h-full outline-none"
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+    >
       {/* Progress Section */}
       {isRunning && (
         <div className="bg-bg-800 rounded-2xl p-4 border border-bg-600 slide-in">
@@ -49,11 +101,11 @@ export function LiveMonitor() {
             <div className="flex items-center gap-2">
               <span className="w-2 h-2 bg-primary rounded-full pulse-dot" />
               <span className="text-sm font-semibold text-primary">
-                Live Burst
+                Live {modeLabel}
               </span>
             </div>
             <span className="text-xs font-mono text-gray-400">
-              {done}/{total} ({progress.toFixed(1)}%)
+              {done} done ({progress.toFixed(1)}%)
             </span>
           </div>
           <div className="h-2 bg-bg-700 rounded-full overflow-hidden">
@@ -98,12 +150,17 @@ export function LiveMonitor() {
               {selectedRequest.status_code ?? "ERR"} —{" "}
               {selectedRequest.latency_ms.toFixed(1)}ms
             </span>
-            <button
-              onClick={() => setSelectedRequest(null)}
-              className="text-gray-500 hover:text-white text-xs px-2 py-1 rounded hover:bg-bg-600 transition-colors"
-            >
-              ✕ Close
-            </button>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-600">
+                ↑↓ navigate • Esc close
+              </span>
+              <button
+                onClick={() => setSelectedRequest(null)}
+                className="text-gray-500 hover:text-white text-xs px-2 py-1 rounded hover:bg-bg-600 transition-colors"
+              >
+                ✕ Close
+              </button>
+            </div>
           </div>
           <pre className="p-4 text-xs font-mono text-gray-300 overflow-auto max-h-48 whitespace-pre-wrap break-all">
             {selectedRequest.response_body
@@ -117,7 +174,8 @@ export function LiveMonitor() {
       <div className="flex-1 bg-bg-800 rounded-xl border border-bg-600 overflow-hidden flex flex-col">
         <div className="px-4 py-2 border-b border-bg-600 text-xs text-gray-500 font-mono flex justify-between">
           <span>
-            LIVE REQUESTS {selectedRequest ? "" : "— click to view response"}
+            LIVE REQUESTS{" "}
+            {selectedRequest ? "" : "— click or ↑↓ to view response"}
           </span>
           <span>
             {done} total / {liveTimeline.length} displayed
