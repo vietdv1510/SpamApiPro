@@ -1,6 +1,7 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useAppStore, type HttpMethod, type TestMode } from "../store";
 import { runLoadTest } from "../tauri";
+import { invoke } from "@tauri-apps/api/core";
 
 /** Một bước trong scenario */
 interface ScenarioStep {
@@ -22,6 +23,13 @@ interface ScenarioStep {
   summary?: string;
 }
 
+/** Saved scenario in DB */
+interface SavedScenario {
+  id: number;
+  name: string;
+  steps: ScenarioStep[];
+}
+
 function createStep(name?: string): ScenarioStep {
   return {
     id: crypto.randomUUID(),
@@ -40,7 +48,6 @@ function createStep(name?: string): ScenarioStep {
   };
 }
 
-/** Kéo thả step thay đổi thứ tự */
 function moveItem<T>(arr: T[], from: number, to: number): T[] {
   const result = [...arr];
   const [item] = result.splice(from, 1);
@@ -57,11 +64,65 @@ const METHOD_COLORS: Record<string, string> = {
   PATCH: "text-purple-400",
 };
 
+// ─── SQLite Persistence ───
+async function loadScenarios(): Promise<SavedScenario[]> {
+  try {
+    const rows =
+      await invoke<{ id: number; name: string; steps_json: string }[]>(
+        "get_scenarios",
+      );
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      steps: JSON.parse(r.steps_json),
+    }));
+  } catch {
+    return [];
+  }
+}
+
+async function saveScenarioToDB(
+  name: string,
+  steps: ScenarioStep[],
+): Promise<number> {
+  return await invoke<number>("save_scenario", {
+    name,
+    stepsJson: JSON.stringify(steps),
+  });
+}
+
+async function updateScenarioInDB(
+  id: number,
+  name: string,
+  steps: ScenarioStep[],
+): Promise<void> {
+  await invoke("update_scenario", {
+    id,
+    name,
+    stepsJson: JSON.stringify(steps),
+  });
+}
+
+async function deleteScenarioFromDB(id: number): Promise<void> {
+  await invoke("delete_scenario", { id });
+}
+
 export function Scenarios() {
   const [steps, setSteps] = useState<ScenarioStep[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
   const [runLog, setRunLog] = useState<string[]>([]);
+  const [scenarioName, setScenarioName] = useState("Untitled Scenario");
+  const [currentScenarioId, setCurrentScenarioId] = useState<number | null>(
+    null,
+  );
+  const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>([]);
+  const [showSaved, setShowSaved] = useState(false);
+
+  // Load saved scenarios on mount
+  useEffect(() => {
+    loadScenarios().then(setSavedScenarios);
+  }, []);
 
   const addStep = () => {
     const step = createStep(`Step ${steps.length + 1}`);
@@ -96,7 +157,7 @@ export function Scenarios() {
     });
   };
 
-  /** Load từ current config */
+  /** Import from current config */
   const importFromConfig = () => {
     const config = useAppStore.getState().config;
     const headers = useAppStore.getState().getEffectiveHeaders();
@@ -114,13 +175,57 @@ export function Scenarios() {
     setExpandedId(step.id);
   };
 
-  /** Chạy tất cả steps tuần tự */
+  /** Save to DB */
+  const handleSave = async () => {
+    try {
+      if (currentScenarioId) {
+        await updateScenarioInDB(currentScenarioId, scenarioName, steps);
+      } else {
+        const id = await saveScenarioToDB(scenarioName, steps);
+        setCurrentScenarioId(id);
+      }
+      const updated = await loadScenarios();
+      setSavedScenarios(updated);
+    } catch (err) {
+      console.error("Save scenario error:", err);
+    }
+  };
+
+  /** Load from saved */
+  const handleLoadScenario = (s: SavedScenario) => {
+    setSteps(
+      s.steps.map((st) => ({
+        ...st,
+        status: "pending" as const,
+        summary: undefined,
+      })),
+    );
+    setScenarioName(s.name);
+    setCurrentScenarioId(s.id);
+    setShowSaved(false);
+  };
+
+  /** Delete saved */
+  const handleDeleteScenario = async (id: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await deleteScenarioFromDB(id);
+      const updated = await loadScenarios();
+      setSavedScenarios(updated);
+      if (currentScenarioId === id) {
+        setCurrentScenarioId(null);
+      }
+    } catch (err) {
+      console.error("Delete scenario error:", err);
+    }
+  };
+
+  /** Run all steps */
   const runScenario = useCallback(async () => {
     if (steps.length === 0) return;
     setIsRunning(true);
     setRunLog([`▶ Starting scenario with ${steps.length} step(s)...`]);
 
-    // Reset all statuses
     setSteps((s) =>
       s.map((st) => ({
         ...st,
@@ -179,14 +284,14 @@ export function Scenarios() {
               ? {
                   ...st,
                   status: passed ? "passed" : "failed",
-                  summary: `${successRate.toFixed(0)}% ok · ${result.requests_per_second.toFixed(0)} RPS · P95: ${result.latency_p95_ms.toFixed(0)}ms`,
+                  summary: `${successRate.toFixed(0)}% · ${result.requests_per_second.toFixed(0)} RPS · P95: ${result.latency_p95_ms.toFixed(0)}ms`,
                 }
               : st,
           ),
         );
         setRunLog((log) => [
           ...log,
-          `  ${passed ? "✅" : "❌"} ${successRate.toFixed(0)}% success, ${result.requests_per_second.toFixed(0)} RPS, P95=${result.latency_p95_ms.toFixed(0)}ms`,
+          `  ${passed ? "✅" : "❌"} ${successRate.toFixed(0)}% success, ${result.requests_per_second.toFixed(0)} RPS`,
         ]);
       } catch (err) {
         setSteps((s) =>
@@ -199,7 +304,6 @@ export function Scenarios() {
         setRunLog((log) => [...log, `  💥 Error: ${err}`]);
       }
 
-      // Think time between steps
       if (step.think_time_ms > 0 && i < steps.length - 1) {
         setRunLog((log) => [...log, `  ⏳ Wait ${step.think_time_ms}ms...`]);
         await new Promise((r) => setTimeout(r, step.think_time_ms));
@@ -227,7 +331,7 @@ export function Scenarios() {
             previous one completes.
           </p>
         </div>
-        <div className="flex flex-col gap-3 w-64">
+        <div className="flex flex-col gap-3 w-72">
           <button
             onClick={addStep}
             className="px-4 py-2.5 rounded-lg text-xs font-medium bg-bg-700 text-gray-400 border border-bg-500 hover:bg-bg-600 hover:text-gray-200 transition-colors"
@@ -248,6 +352,31 @@ export function Scenarios() {
               </div>
             </button>
           )}
+          {savedScenarios.length > 0 && (
+            <div className="border-t border-bg-700 pt-3 mt-1">
+              <p className="text-[10px] text-gray-600 mb-2">Saved Scenarios</p>
+              {savedScenarios.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => handleLoadScenario(s)}
+                  className="w-full px-3 py-2 rounded-lg text-xs text-left bg-bg-800 border border-bg-600 hover:border-bg-500 transition-colors mb-1 flex items-center justify-between group"
+                >
+                  <div>
+                    <span className="text-gray-300">{s.name}</span>
+                    <span className="text-gray-600 ml-2">
+                      {s.steps.length} steps
+                    </span>
+                  </div>
+                  <button
+                    onClick={(e) => handleDeleteScenario(s.id, e)}
+                    className="text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all text-xs"
+                  >
+                    ✕
+                  </button>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     );
@@ -258,51 +387,86 @@ export function Scenarios() {
     <div className="flex flex-col h-full gap-3 overflow-hidden">
       {/* Toolbar */}
       <div className="flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-gray-500 font-medium">
+        <div className="flex items-center gap-3">
+          <input
+            className="bg-transparent text-sm text-gray-300 font-medium border-b border-transparent hover:border-bg-500 focus:border-primary/50 outline-none px-1 py-0.5 w-40"
+            value={scenarioName}
+            onChange={(e) => setScenarioName(e.target.value)}
+            placeholder="Scenario name"
+          />
+          <span className="text-[10px] text-gray-600">
             {steps.length} step{steps.length > 1 ? "s" : ""}
           </span>
           <button
             onClick={addStep}
             className="text-[10px] px-2 py-1 rounded bg-bg-700 text-gray-400 hover:text-primary hover:bg-primary/10 transition-colors"
           >
-            + Blank
-          </button>
-          <button
-            onClick={importFromConfig}
-            className="text-[10px] px-2 py-1 rounded bg-primary/10 text-primary/70 hover:text-primary hover:bg-primary/20 transition-colors font-medium"
-            title={`Import: ${useAppStore.getState().config.method} ${useAppStore.getState().config.url}`}
-          >
-            📥 Import Config
+            + Add
           </button>
         </div>
-        <button
-          onClick={runScenario}
-          disabled={isRunning}
-          className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
-            isRunning
-              ? "bg-gray-700 text-gray-500 cursor-not-allowed"
-              : "bg-gradient-to-r from-primary to-secondary text-bg-900 hover:scale-105"
-          }`}
-        >
-          {isRunning ? "⏳ Running..." : "▶ Run All"}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Save */}
+          <button
+            onClick={handleSave}
+            className="text-[10px] px-3 py-1.5 rounded-lg bg-bg-700 text-gray-400 hover:text-gray-200 hover:bg-bg-600 transition-colors font-medium"
+          >
+            💾 Save
+          </button>
+          {savedScenarios.length > 0 && (
+            <div className="relative">
+              <button
+                onClick={() => setShowSaved(!showSaved)}
+                className="text-[10px] px-2 py-1.5 rounded-lg bg-bg-700 text-gray-400 hover:text-gray-200 hover:bg-bg-600 transition-colors"
+              >
+                📂 Load
+              </button>
+              {showSaved && (
+                <div className="absolute right-0 top-8 w-56 bg-bg-800 border border-bg-600 rounded-xl shadow-xl z-50 p-2 space-y-1 slide-in">
+                  {savedScenarios.map((s) => (
+                    <button
+                      key={s.id}
+                      onClick={() => handleLoadScenario(s)}
+                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-bg-700 transition-colors text-xs flex justify-between items-center group"
+                    >
+                      <span className="text-gray-300">{s.name}</span>
+                      <span className="text-gray-600">{s.steps.length}s</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+          {/* New */}
+          <button
+            onClick={() => {
+              setSteps([]);
+              setScenarioName("Untitled Scenario");
+              setCurrentScenarioId(null);
+              setRunLog([]);
+            }}
+            className="text-[10px] px-2 py-1.5 rounded-lg bg-bg-700 text-gray-500 hover:text-gray-300 hover:bg-bg-600 transition-colors"
+          >
+            New
+          </button>
+          {/* Run */}
+          <button
+            onClick={runScenario}
+            disabled={isRunning}
+            className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
+              isRunning
+                ? "bg-gray-700 text-gray-500 cursor-not-allowed"
+                : "bg-gradient-to-r from-primary to-secondary text-bg-900 hover:scale-105"
+            }`}
+          >
+            {isRunning ? "⏳ Running..." : "▶ Run All"}
+          </button>
+        </div>
       </div>
 
       {/* Steps list */}
       <div className="flex-1 overflow-y-auto space-y-2">
         {steps.map((step, index) => {
           const isExpanded = expandedId === step.id;
-          const statusIcon =
-            step.status === "running"
-              ? "⏳"
-              : step.status === "passed"
-                ? "✅"
-                : step.status === "failed"
-                  ? "❌"
-                  : step.status === "skipped"
-                    ? "⏭"
-                    : "⬜";
           const statusBorder =
             step.status === "running"
               ? "border-primary/40"
@@ -312,6 +476,18 @@ export function Scenarios() {
                   ? "border-red-500/40"
                   : "border-bg-600";
 
+          // Status indicator — colored dot, not checkbox
+          const statusDot =
+            step.status === "running"
+              ? "bg-primary animate-pulse"
+              : step.status === "passed"
+                ? "bg-success"
+                : step.status === "failed"
+                  ? "bg-red-500"
+                  : step.status === "skipped"
+                    ? "bg-gray-600"
+                    : "bg-bg-500";
+
           return (
             <div
               key={step.id}
@@ -319,15 +495,19 @@ export function Scenarios() {
             >
               {/* Step header */}
               <div
-                className="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-bg-700/50 transition-colors"
+                className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-bg-700/50 transition-colors group"
                 onClick={() => setExpandedId(isExpanded ? null : step.id)}
               >
-                <span className="text-sm">{statusIcon}</span>
-                <span className="text-xs text-gray-600 font-mono w-6">
+                {/* Status dot */}
+                <span
+                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusDot}`}
+                />
+
+                <span className="text-xs text-gray-600 font-mono w-5 shrink-0">
                   {index + 1}.
                 </span>
                 <span
-                  className={`text-xs font-mono font-bold ${METHOD_COLORS[step.method] || "text-gray-400"}`}
+                  className={`text-xs font-mono font-bold shrink-0 ${METHOD_COLORS[step.method] || "text-gray-400"}`}
                 >
                   {step.method}
                 </span>
@@ -335,78 +515,133 @@ export function Scenarios() {
                   {step.url || "(no URL)"}
                 </span>
                 {step.summary && (
-                  <span className="text-[10px] text-gray-500 font-mono">
+                  <span className="text-[10px] text-gray-500 font-mono shrink-0">
                     {step.summary}
                   </span>
                 )}
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100">
+
+                {/* Action icons — always visible, white */}
+                <div className="flex items-center gap-1 shrink-0">
+                  {/* Move up */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       if (index > 0)
                         setSteps(moveItem(steps, index, index - 1));
                     }}
-                    className="text-gray-600 hover:text-gray-300 text-[10px] px-1"
+                    className="w-6 h-6 rounded flex items-center justify-center text-gray-500 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
                     title="Move up"
                   >
-                    ▲
+                    <svg
+                      className="w-3 h-3"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="18 15 12 9 6 15" />
+                    </svg>
                   </button>
+                  {/* Move down */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       if (index < steps.length - 1)
                         setSteps(moveItem(steps, index, index + 1));
                     }}
-                    className="text-gray-600 hover:text-gray-300 text-[10px] px-1"
+                    className="w-6 h-6 rounded flex items-center justify-center text-gray-500 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
                     title="Move down"
                   >
-                    ▼
+                    <svg
+                      className="w-3 h-3"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
                   </button>
+                  {/* Duplicate */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      duplicateStep(step.id);
+                    }}
+                    className="w-6 h-6 rounded flex items-center justify-center text-gray-500 hover:text-white hover:bg-bg-600 transition-colors"
+                    title="Duplicate"
+                  >
+                    <svg
+                      className="w-3.5 h-3.5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                    </svg>
+                  </button>
+                  {/* Delete */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      removeStep(step.id);
+                    }}
+                    className="w-6 h-6 rounded flex items-center justify-center text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    title="Delete"
+                  >
+                    <svg
+                      className="w-3.5 h-3.5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                  </button>
+                  {/* Expand chevron */}
+                  <svg
+                    className={`w-3.5 h-3.5 text-gray-600 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <polyline points="6 9 12 15 18 9" />
+                  </svg>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    duplicateStep(step.id);
-                  }}
-                  className="text-gray-700 hover:text-primary text-[10px] px-1"
-                  title="Duplicate"
-                >
-                  ⧉
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    removeStep(step.id);
-                  }}
-                  className="text-gray-700 hover:text-red-400 text-xs px-1"
-                  title="Delete"
-                >
-                  ✕
-                </button>
-                <span className="text-gray-700 text-xs">
-                  {isExpanded ? "▾" : "▸"}
-                </span>
               </div>
 
               {/* Expanded editor */}
               {isExpanded && (
                 <div className="border-t border-bg-600 px-4 py-3 space-y-3 slide-in">
                   {/* Name */}
-                  <div className="flex gap-2">
-                    <input
-                      className="flex-1 bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:border-primary/50 outline-none"
-                      placeholder="Step name"
-                      value={step.name}
-                      onChange={(e) =>
-                        updateStep(step.id, { name: e.target.value })
-                      }
-                    />
-                  </div>
+                  <input
+                    className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:border-primary/50 outline-none"
+                    placeholder="Step name"
+                    value={step.name}
+                    onChange={(e) =>
+                      updateStep(step.id, { name: e.target.value })
+                    }
+                  />
 
                   {/* Method + URL */}
                   <div className="flex gap-2">
                     <select
-                      className="w-24 bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs font-mono text-gray-200 focus:border-primary/50 outline-none"
+                      className="w-24 bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs font-mono text-gray-200"
                       value={step.method}
                       onChange={(e) =>
                         updateStep(step.id, {
@@ -430,11 +665,11 @@ export function Scenarios() {
                     />
                   </div>
 
-                  {/* VUs + Mode */}
+                  {/* VUs + Mode + Delay */}
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <label className="text-[10px] text-gray-600 mb-1 block">
-                        Virtual Users / Requests
+                        Requests / VUs
                       </label>
                       <input
                         type="number"
@@ -453,7 +688,7 @@ export function Scenarios() {
                         Mode
                       </label>
                       <select
-                        className="w-full bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs text-gray-200 outline-none focus:border-primary/50"
+                        className="w-full bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs text-gray-200"
                         value={step.mode}
                         onChange={(e) =>
                           updateStep(step.id, {
@@ -470,12 +705,6 @@ export function Scenarios() {
                     <div className="flex-1">
                       <label className="text-[10px] text-gray-600 mb-1 block">
                         Delay After (ms)
-                        <span
-                          className="text-gray-700 ml-1"
-                          title="Wait time before running the next step in the flow"
-                        >
-                          ⓘ
-                        </span>
                       </label>
                       <input
                         type="number"
@@ -507,9 +736,7 @@ export function Scenarios() {
                         placeholder='{"key": "value"}'
                         value={step.body || ""}
                         onChange={(e) =>
-                          updateStep(step.id, {
-                            body: e.target.value || null,
-                          })
+                          updateStep(step.id, { body: e.target.value || null })
                         }
                       />
                     </div>

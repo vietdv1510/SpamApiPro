@@ -17,6 +17,14 @@ pub struct HistoryEntry {
     pub result_json: String,
 }
 
+/// Một scenario đã lưu
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScenarioEntry {
+    pub id: i64,
+    pub name: String,
+    pub steps_json: String,
+}
+
 /// Database wrapper — thread-safe
 pub struct Database {
     conn: Arc<Mutex<Connection>>,
@@ -54,6 +62,19 @@ impl Database {
             [],
         )
         .map_err(|e| format!("Cannot create table: {}", e))?;
+
+        // Bảng scenarios
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS scenarios (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                name        TEXT NOT NULL,
+                steps_json  TEXT NOT NULL,
+                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+            )",
+            [],
+        )
+        .map_err(|e| format!("Cannot create scenarios table: {}", e))?;;
 
         eprintln!("📦 [DB] SQLite opened at {:?}", db_path);
         Ok(Self {
@@ -130,6 +151,56 @@ impl Database {
         let conn = self.conn.lock();
         conn.execute("DELETE FROM test_history", [])
             .map_err(|e| format!("Clear error: {}", e))?;
+        Ok(())
+    }
+
+    // ─── Scenarios CRUD ───
+
+    pub fn save_scenario(&self, name: &str, steps_json: &str) -> Result<i64, String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT INTO scenarios (name, steps_json) VALUES (?1, ?2)",
+            params![name, steps_json],
+        )
+        .map_err(|e| format!("Insert scenario error: {}", e))?;
+        Ok(conn.last_insert_rowid())
+    }
+
+    pub fn update_scenario(&self, id: i64, name: &str, steps_json: &str) -> Result<(), String> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "UPDATE scenarios SET name = ?1, steps_json = ?2, updated_at = CURRENT_TIMESTAMP WHERE id = ?3",
+            params![name, steps_json, id],
+        )
+        .map_err(|e| format!("Update scenario error: {}", e))?;
+        Ok(())
+    }
+
+    pub fn get_scenarios(&self) -> Result<Vec<ScenarioEntry>, String> {
+        let conn = self.conn.lock();
+        let mut stmt = conn
+            .prepare("SELECT id, name, steps_json FROM scenarios ORDER BY updated_at DESC")
+            .map_err(|e| format!("Prepare error: {}", e))?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(ScenarioEntry {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    steps_json: row.get(2)?,
+                })
+            })
+            .map_err(|e| format!("Query error: {}", e))?;
+        let mut entries = Vec::new();
+        for row in rows {
+            entries.push(row.map_err(|e| format!("Row error: {}", e))?);
+        }
+        Ok(entries)
+    }
+
+    pub fn delete_scenario(&self, id: i64) -> Result<(), String> {
+        let conn = self.conn.lock();
+        conn.execute("DELETE FROM scenarios WHERE id = ?1", params![id])
+            .map_err(|e| format!("Delete scenario error: {}", e))?;
         Ok(())
     }
 }

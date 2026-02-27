@@ -187,6 +187,37 @@ pub fn open_file(path: String) -> Result<(), String> {
     Ok(())
 }
 
+// ─── Scenario Commands ───
+
+#[tauri::command]
+pub fn get_scenarios(state: State<'_, AppState>) -> Result<Vec<db::ScenarioEntry>, String> {
+    state.db.get_scenarios()
+}
+
+#[tauri::command]
+pub fn save_scenario(
+    state: State<'_, AppState>,
+    name: String,
+    steps_json: String,
+) -> Result<i64, String> {
+    state.db.save_scenario(&name, &steps_json)
+}
+
+#[tauri::command]
+pub fn update_scenario(
+    state: State<'_, AppState>,
+    id: i64,
+    name: String,
+    steps_json: String,
+) -> Result<(), String> {
+    state.db.update_scenario(id, &name, &steps_json)
+}
+
+#[tauri::command]
+pub fn delete_scenario(state: State<'_, AppState>, id: i64) -> Result<(), String> {
+    state.db.delete_scenario(id)
+}
+
 /// Tokenize curl command — respects single/double quoted strings
 fn tokenize_curl(cmd: &str) -> Vec<String> {
     let mut tokens: Vec<String> = Vec::new();
