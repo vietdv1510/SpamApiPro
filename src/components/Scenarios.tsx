@@ -253,7 +253,23 @@ export function Scenarios() {
   const [steps, setSteps] = useState<ScenarioStep[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
-  const [runLog, setRunLog] = useState<string[]>([]);
+  const [_runLog, setRunLog] = useState<string[]>([]);
+
+  interface StepResult {
+    stepName: string;
+    method: string;
+    url: string;
+    status: "running" | "passed" | "failed" | "skipped";
+    successRate?: number;
+    rps?: number;
+    p95?: number;
+    totalReqs?: number;
+    error?: string;
+  }
+  const [runResults, setRunResults] = useState<StepResult[]>([]);
+  const [scenarioStatus, setScenarioStatus] = useState<
+    "idle" | "running" | "passed" | "failed"
+  >("idle");
   const [scenarioName, setScenarioName] = useState("Untitled Scenario");
   const [currentScenarioId, setCurrentScenarioId] = useState<number | null>(
     null,
@@ -401,7 +417,16 @@ export function Scenarios() {
   const runScenario = useCallback(async () => {
     if (steps.length === 0) return;
     setIsRunning(true);
-    setRunLog([`▶ Starting scenario with ${steps.length} step(s)...`]);
+    setScenarioStatus("running");
+    setRunLog([]);
+    setRunResults(
+      steps.map((s) => ({
+        stepName: s.name,
+        method: s.method,
+        url: s.url,
+        status: "running" as const,
+      })),
+    );
     setSteps((s) =>
       s.map((st) => ({
         ...st,
@@ -410,15 +435,17 @@ export function Scenarios() {
       })),
     );
 
+    let allPassed = true;
     for (let i = 0; i < steps.length; i++) {
       const step = steps[i];
       setSteps((s) =>
         s.map((st) => (st.id === step.id ? { ...st, status: "running" } : st)),
       );
-      setRunLog((log) => [
-        ...log,
-        `[${i + 1}/${steps.length}] Running "${step.name}" → ${step.method} ${step.url}`,
-      ]);
+      setRunResults((prev) =>
+        prev.map((r, idx) =>
+          idx === i ? { ...r, status: "running" as const } : r,
+        ),
+      );
 
       if (!step.url.trim()) {
         setSteps((s) =>
@@ -428,7 +455,11 @@ export function Scenarios() {
               : st,
           ),
         );
-        setRunLog((log) => [...log, `  ⏭ Skipped — no URL`]);
+        setRunResults((prev) =>
+          prev.map((r, idx) =>
+            idx === i ? { ...r, status: "skipped" as const } : r,
+          ),
+        );
         continue;
       }
 
@@ -454,6 +485,8 @@ export function Scenarios() {
             ? (result.success_count / result.total_requests) * 100
             : 0;
         const passed = successRate >= 95;
+        if (!passed) allPassed = false;
+
         setSteps((s) =>
           s.map((st) =>
             st.id === step.id
@@ -465,11 +498,24 @@ export function Scenarios() {
               : st,
           ),
         );
-        setRunLog((log) => [
-          ...log,
-          `  ${passed ? "✅" : "❌"} ${successRate.toFixed(0)}% success`,
-        ]);
+        setRunResults((prev) =>
+          prev.map((r, idx) =>
+            idx === i
+              ? {
+                  ...r,
+                  status: passed
+                    ? "passed"
+                    : ("failed" as StepResult["status"]),
+                  successRate,
+                  rps: result.requests_per_second,
+                  p95: result.latency_p95_ms,
+                  totalReqs: result.total_requests,
+                }
+              : r,
+          ),
+        );
       } catch (err) {
+        allPassed = false;
         setSteps((s) =>
           s.map((st) =>
             st.id === step.id
@@ -477,16 +523,26 @@ export function Scenarios() {
               : st,
           ),
         );
-        setRunLog((log) => [...log, `  💥 Error: ${err}`]);
+        setRunResults((prev) =>
+          prev.map((r, idx) =>
+            idx === i
+              ? {
+                  ...r,
+                  status: "failed" as const,
+                  error: String(err),
+                }
+              : r,
+          ),
+        );
       }
 
       if (step.think_time_ms > 0 && i < steps.length - 1) {
-        setRunLog((log) => [...log, `  ⏳ Wait ${step.think_time_ms}ms...`]);
         await new Promise((r) => setTimeout(r, step.think_time_ms));
       }
     }
-    setRunLog((log) => [...log, `✅ Scenario complete!`]);
+    setScenarioStatus(allPassed ? "passed" : "failed");
     setIsRunning(false);
+    showToast(allPassed ? "Scenario passed! ✅" : "Scenario has failures ⚠️");
   }, [steps]);
 
   // ─── LIST VIEW ───
@@ -990,24 +1046,155 @@ export function Scenarios() {
         })}
       </div>
 
-      {/* Run Log */}
-      {runLog.length > 0 && (
-        <div className="shrink-0 max-h-40 bg-bg-800 border border-bg-600 rounded-xl overflow-hidden">
-          <div className="px-3 py-1.5 border-b border-bg-600 flex justify-between items-center">
-            <span className="text-[10px] text-gray-500 font-mono uppercase">
-              Run Log
-            </span>
+      {/* Run Results Panel */}
+      {runResults.length > 0 && (
+        <div className="shrink-0 bg-bg-800 border border-bg-600 rounded-xl overflow-hidden">
+          {/* Header with overall status */}
+          <div className="px-3 py-2 border-b border-bg-600 flex justify-between items-center">
+            <div className="flex items-center gap-2">
+              {scenarioStatus === "running" && (
+                <span className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+              )}
+              {scenarioStatus === "passed" && (
+                <svg
+                  className="w-4 h-4 text-success"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              )}
+              {scenarioStatus === "failed" && (
+                <svg
+                  className="w-4 h-4 text-danger"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="15" y1="9" x2="9" y2="15" />
+                  <line x1="9" y1="9" x2="15" y2="15" />
+                </svg>
+              )}
+              <span
+                className={`text-xs font-bold ${
+                  scenarioStatus === "passed"
+                    ? "text-success"
+                    : scenarioStatus === "failed"
+                      ? "text-danger"
+                      : scenarioStatus === "running"
+                        ? "text-primary"
+                        : "text-gray-400"
+                }`}
+              >
+                {scenarioStatus === "running"
+                  ? "Running..."
+                  : scenarioStatus === "passed"
+                    ? "All Steps Passed"
+                    : scenarioStatus === "failed"
+                      ? "Scenario Failed"
+                      : "Results"}
+              </span>
+              <span className="text-[10px] text-gray-600">
+                {runResults.filter((r) => r.status === "passed").length}/
+                {runResults.length} passed
+              </span>
+            </div>
             <button
-              onClick={() => setRunLog([])}
+              onClick={() => {
+                setRunResults([]);
+                setRunLog([]);
+                setScenarioStatus("idle");
+              }}
               className="text-[10px] text-gray-700 hover:text-gray-400"
             >
               Clear
             </button>
           </div>
-          <div className="p-3 overflow-y-auto max-h-28 space-y-0.5">
-            {runLog.map((line, i) => (
-              <div key={i} className="text-[11px] font-mono text-gray-400">
-                {line}
+
+          {/* Step results */}
+          <div className="max-h-44 overflow-y-auto">
+            {runResults.map((r, i) => (
+              <div
+                key={i}
+                className={`px-3 py-2 flex items-center gap-3 border-b border-bg-700/50 last:border-0 ${
+                  r.status === "running" ? "bg-primary/5" : ""
+                }`}
+              >
+                {/* Status dot */}
+                <span
+                  className={`w-2 h-2 rounded-full shrink-0 ${
+                    r.status === "running"
+                      ? "bg-primary animate-pulse"
+                      : r.status === "passed"
+                        ? "bg-success"
+                        : r.status === "failed"
+                          ? "bg-danger"
+                          : "bg-gray-600"
+                  }`}
+                />
+
+                {/* Step info */}
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-gray-600">[{i + 1}]</span>
+                    <span className="text-xs text-gray-300 truncate">
+                      {r.stepName}
+                    </span>
+                    <span className="text-[9px] font-mono text-gray-600 shrink-0">
+                      {r.method}
+                    </span>
+                  </div>
+                  {r.error && (
+                    <p className="text-[10px] text-danger/70 truncate mt-0.5">
+                      {r.error}
+                    </p>
+                  )}
+                </div>
+
+                {/* Metrics */}
+                {r.successRate !== undefined && (
+                  <div className="flex items-center gap-3 shrink-0">
+                    <div className="flex items-center gap-1.5">
+                      <div className="w-16 h-1.5 bg-bg-700 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all duration-500 ${
+                            r.successRate >= 95
+                              ? "bg-success"
+                              : r.successRate >= 50
+                                ? "bg-warning"
+                                : "bg-danger"
+                          }`}
+                          style={{ width: `${r.successRate}%` }}
+                        />
+                      </div>
+                      <span
+                        className={`text-[10px] font-mono font-bold w-8 text-right ${
+                          r.successRate >= 95
+                            ? "text-success"
+                            : r.successRate >= 50
+                              ? "text-warning"
+                              : "text-danger"
+                        }`}
+                      >
+                        {r.successRate.toFixed(0)}%
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-mono text-gray-500 w-14 text-right">
+                      {r.rps?.toFixed(0)} RPS
+                    </span>
+                    <span className="text-[10px] font-mono text-gray-600 w-16 text-right">
+                      P95: {r.p95?.toFixed(0)}ms
+                    </span>
+                  </div>
+                )}
               </div>
             ))}
           </div>
