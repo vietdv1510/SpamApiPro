@@ -104,6 +104,11 @@ interface AppState {
   activeSection: SidebarSection;
   activeTab: AppTab;
   scenariosDirty: boolean;
+  scenarioEditState: {
+    steps: any[];
+    name: string;
+    scenarioId: number | null;
+  } | null;
   curlImportText: string;
   showCurlImport: boolean;
 
@@ -118,6 +123,7 @@ interface AppState {
   setActiveSection: (section: SidebarSection) => void;
   setActiveTab: (tab: AppTab) => void;
   setScenariosDirty: (dirty: boolean) => void;
+  setScenarioEditState: (state: AppState["scenarioEditState"]) => void;
   setCurlImportText: (text: string) => void;
   setShowCurlImport: (show: boolean) => void;
   setHistory: (items: HistoryItem[]) => void;
@@ -152,6 +158,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   activeSection: "test" as SidebarSection,
   activeTab: "test" as AppTab,
   scenariosDirty: false,
+  scenarioEditState: null,
   curlImportText: "",
   showCurlImport: false,
 
@@ -195,6 +202,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
   setActiveTab: (activeTab) => set({ activeTab }),
 
   setScenariosDirty: (scenariosDirty) => set({ scenariosDirty }),
+
+  setScenarioEditState: (scenarioEditState) => set({ scenarioEditState }),
 
   setCurlImportText: (curlImportText) => set({ curlImportText }),
 

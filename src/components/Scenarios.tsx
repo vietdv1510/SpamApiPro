@@ -273,13 +273,38 @@ export function Scenarios() {
   );
   const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>([]);
   const [showSaved, setShowSaved] = useState(false);
-  const [curlInput, setCurlInput] = useState<string | null>(null); // null = hidden
+  const [curlInput, setCurlInput] = useState<string | null>(null);
 
   const markDirty = () => useAppStore.getState().setScenariosDirty(true);
 
+  /** Sync editing state to store (persists across tab switches) */
+  const syncToStore = (
+    newSteps: ScenarioStep[],
+    name: string,
+    id: number | null,
+  ) => {
+    useAppStore.getState().setScenarioEditState({
+      steps: newSteps,
+      name,
+      scenarioId: id,
+    });
+  };
+
+  // Restore state from store on mount
   useEffect(() => {
+    const saved = useAppStore.getState().scenarioEditState;
+    if (saved && saved.steps.length > 0) {
+      setSteps(saved.steps);
+      setScenarioName(saved.name);
+      setCurrentScenarioId(saved.scenarioId);
+    }
     loadScenarios().then(setSavedScenarios);
   }, []);
+
+  // Persist to store whenever steps or name changes
+  useEffect(() => {
+    syncToStore(steps, scenarioName, currentScenarioId);
+  }, [steps, scenarioName, currentScenarioId]);
 
   const addStep = () => {
     const step = createStep(`Step ${steps.length + 1}`);
