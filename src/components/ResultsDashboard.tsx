@@ -93,10 +93,11 @@ function RaceConditionBadge({ result }: { result: TestResult }) {
   );
 }
 
-export function ResultsDashboard() {
+export function ResultsDashboard({ result }: { result?: TestResult }) {
   const { currentResult } = useAppStore();
+  const r = result || currentResult;
 
-  if (!currentResult) {
+  if (!r) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center">
@@ -109,7 +110,6 @@ export function ResultsDashboard() {
     );
   }
 
-  const r = currentResult;
   const successRate =
     r.total_requests > 0 ? (r.success_count / r.total_requests) * 100 : 0;
 

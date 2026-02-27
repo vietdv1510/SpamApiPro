@@ -1,11 +1,13 @@
 import { useEffect, useState } from "react";
-import { useAppStore } from "../store";
+import { useAppStore, type HistoryItem } from "../store";
 import { deleteHistoryEntry, clearAllHistory } from "../tauri";
 import { loadHistoryFromDB } from "../hooks/useTestRunner";
+import { ResultsDashboard } from "./ResultsDashboard";
 
 export function History() {
   const { history } = useAppStore();
   const [loading, setLoading] = useState(true);
+  const [selectedEntry, setSelectedEntry] = useState<HistoryItem | null>(null);
 
   // Load history từ SQLite khi mount
   useEffect(() => {
@@ -42,6 +44,8 @@ export function History() {
     try {
       await deleteHistoryEntry(id);
       await loadHistoryFromDB();
+      // Nếu đang xem entry bị xóa → đóng detail
+      if (selectedEntry?.id === id) setSelectedEntry(null);
     } catch (err) {
       console.error("Delete history error:", err);
     }
@@ -52,16 +56,14 @@ export function History() {
     try {
       await clearAllHistory();
       await loadHistoryFromDB();
+      setSelectedEntry(null);
     } catch (err) {
       console.error("Clear history error:", err);
     }
   };
 
-  /** Reuse Config — nạp lại config từ history vào form để chạy lại */
-  const handleReuseConfig = (
-    entry: (typeof history)[0],
-    e: React.MouseEvent,
-  ) => {
+  /** Reuse Config — nạp lại config từ history vào form */
+  const handleReuseConfig = (entry: HistoryItem, e: React.MouseEvent) => {
     e.stopPropagation();
     const store = useAppStore.getState();
     store.applyParsedConfig(entry.config);
@@ -69,14 +71,57 @@ export function History() {
     store.setActiveTab("test");
   };
 
-  /** Click vào card → xem results */
-  const handleViewResult = (entry: (typeof history)[0]) => {
-    const store = useAppStore.getState();
-    store.setCurrentResult(entry.result);
-    store.setActiveSection("test");
-    store.setActiveTab("results");
-  };
+  // ─── Detail view — khi click vào 1 entry ───
+  if (selectedEntry) {
+    return (
+      <div className="flex flex-col h-full overflow-hidden">
+        {/* Back bar */}
+        <div className="flex items-center gap-3 pb-3 mb-3 border-b border-bg-700 shrink-0">
+          <button
+            onClick={() => setSelectedEntry(null)}
+            className="text-xs text-gray-500 hover:text-gray-300 transition-colors flex items-center gap-1"
+          >
+            <svg
+              className="w-4 h-4"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+            Back
+          </button>
+          <div className="flex items-center gap-2 flex-1 min-w-0">
+            <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">
+              {selectedEntry.method}
+            </span>
+            <span className="text-xs font-mono text-gray-400 truncate">
+              {selectedEntry.url}
+            </span>
+          </div>
+          <span className="text-[10px] text-gray-600 shrink-0">
+            🕐 {selectedEntry.timestamp}
+          </span>
+          <button
+            onClick={(e) => handleReuseConfig(selectedEntry, e)}
+            className="text-[10px] px-2 py-1 rounded bg-primary/10 text-primary/70 hover:text-primary hover:bg-primary/20 transition-colors font-medium shrink-0"
+          >
+            🔄 Reuse Config
+          </button>
+        </div>
 
+        {/* Inline result dashboard */}
+        <div className="flex-1 overflow-hidden">
+          <ResultsDashboard result={selectedEntry.result} />
+        </div>
+      </div>
+    );
+  }
+
+  // ─── List view ───
   return (
     <div className="overflow-y-auto h-full space-y-2">
       {/* Header with clear button */}
@@ -101,7 +146,7 @@ export function History() {
           <div
             key={entry.id}
             className="bg-bg-800 border border-bg-600 rounded-xl p-4 hover:border-bg-500 transition-all cursor-pointer group relative"
-            onClick={() => handleViewResult(entry)}
+            onClick={() => setSelectedEntry(entry)}
           >
             {/* Action buttons */}
             <div className="absolute top-2 right-2 flex items-center gap-1">
