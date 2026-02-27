@@ -5,6 +5,7 @@ import { LiveMonitor } from "./components/LiveMonitor";
 import { ResultsDashboard } from "./components/ResultsDashboard";
 import { History } from "./components/History";
 import { Scenarios } from "./components/Scenarios";
+import { Toast, ConfirmModal, confirmDialog } from "./components/Dialogs";
 import { useAppStore, type SidebarSection } from "./store";
 
 /** Sidebar items — monochrome icons */
@@ -95,9 +96,12 @@ function App() {
   } = useAppStore();
 
   /** Guard chuyển section — cảnh báo nếu có unsaved changes */
-  const handleSectionChange = (id: SidebarSection) => {
+  const handleSectionChange = async (id: SidebarSection) => {
     if (activeSection === "scenarios" && id !== "scenarios" && scenariosDirty) {
-      if (!confirm("You have unsaved scenario changes. Leave anyway?")) return;
+      const ok = await confirmDialog(
+        "You have unsaved scenario changes. Leave anyway?",
+      );
+      if (!ok) return;
       useAppStore.getState().setScenariosDirty(false);
     }
     setActiveSection(id);
@@ -319,6 +323,8 @@ function App() {
           SpamAPI Pro v0.1.0
         </div>
       </div>
+      <Toast />
+      <ConfirmModal />
     </div>
   );
 }

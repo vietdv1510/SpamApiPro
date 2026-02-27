@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from "react";
 import { useAppStore, type HttpMethod, type TestMode } from "../store";
 import { runLoadTest, parseCurl } from "../tauri";
 import { invoke } from "@tauri-apps/api/core";
+import { confirmDialog, showToast } from "./Dialogs";
 
 /** Một bước trong scenario */
 interface ScenarioStep {
@@ -287,8 +288,9 @@ export function Scenarios() {
     markDirty();
   };
 
-  const removeStep = (id: string) => {
-    if (!confirm("Delete this step?")) return;
+  const removeStep = async (id: string) => {
+    const ok = await confirmDialog("Delete this step?");
+    if (!ok) return;
     setSteps((s) => s.filter((st) => st.id !== id));
     if (expandedId === id) setExpandedId(null);
     markDirty();
@@ -347,8 +349,9 @@ export function Scenarios() {
         body: parsed.body || null,
       });
       setCurlInput(null);
+      showToast("cURL imported successfully");
     } catch (err) {
-      alert(`Invalid cURL: ${err}`);
+      showToast(`Invalid cURL: ${err}`);
     }
   };
 
@@ -363,14 +366,17 @@ export function Scenarios() {
       const updated = await loadScenarios();
       setSavedScenarios(updated);
       useAppStore.getState().setScenariosDirty(false);
+      showToast(`Scenario "${scenarioName}" saved!`);
     } catch (err) {
       console.error("Save scenario error:", err);
+      showToast("Failed to save scenario");
     }
   };
 
-  const handleLoadScenario = (s: SavedScenario) => {
+  const handleLoadScenario = async (s: SavedScenario) => {
     if (steps.length > 0 && useAppStore.getState().scenariosDirty) {
-      if (!confirm("Discard current unsaved changes?")) return;
+      const ok = await confirmDialog("Discard current unsaved changes?");
+      if (!ok) return;
     }
     setSteps(
       s.steps.map((st) => ({
@@ -383,16 +389,19 @@ export function Scenarios() {
     setCurrentScenarioId(s.id);
     setShowSaved(false);
     useAppStore.getState().setScenariosDirty(false);
+    showToast(`Loaded "${s.name}"`);
   };
 
   const handleDeleteScenario = async (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!confirm("Delete this saved scenario?")) return;
+    const ok = await confirmDialog("Delete this saved scenario?");
+    if (!ok) return;
     try {
       await deleteScenarioFromDB(id);
       const updated = await loadScenarios();
       setSavedScenarios(updated);
       if (currentScenarioId === id) setCurrentScenarioId(null);
+      showToast("Scenario deleted");
     } catch (err) {
       console.error("Delete scenario error:", err);
     }
@@ -632,15 +641,18 @@ export function Scenarios() {
             </div>
           )}
           <button
-            onClick={() => {
+            onClick={async () => {
               if (steps.length > 0 && useAppStore.getState().scenariosDirty) {
-                if (!confirm("Discard current scenario?")) return;
+                const ok = await confirmDialog("Discard current scenario?");
+                if (!ok) return;
               }
               setSteps([]);
               setScenarioName("Untitled Scenario");
               setCurrentScenarioId(null);
               setRunLog([]);
+              setExpandedId(null);
               useAppStore.getState().setScenariosDirty(false);
+              showToast("New scenario created");
             }}
             className="text-[10px] px-2.5 py-1.5 rounded-lg bg-bg-700 text-gray-500 hover:text-white hover:bg-bg-600 transition-colors"
           >
