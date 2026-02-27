@@ -104,7 +104,7 @@ impl LoadTestEngine {
         Ok(Self { client })
     }
 
-    /// Warm up connections — hỗ trợ cancel
+    /// Warm up connections — hỗ trợ cancel + hard timeout 15s
     async fn warm_up_connections(
         &self,
         url: &str,
@@ -133,9 +133,14 @@ impl LoadTestEngine {
             }));
         }
 
-        for handle in handles {
-            let _ = handle.await;
-        }
+        // ⚡ Hard timeout 15s — warm-up KHÔNG BAO GIỜ treo quá 15 giây
+        let warmup_future = async {
+            for handle in handles {
+                let _ = handle.await;
+            }
+        };
+
+        let _ = tokio::time::timeout(Duration::from_secs(15), warmup_future).await;
 
         (start.elapsed(), success.load(Ordering::Relaxed) as usize)
     }
@@ -182,6 +187,7 @@ impl LoadTestEngine {
         }
 
         // ── PHASE 2: PRE-BUILD ALL REQUESTS ──
+        eprintln!("📋 [BURST] Phase 2: Pre-building {} requests...", n);
         let callback = Arc::new(progress_callback);
         let completed = Arc::new(AtomicU32::new(0));
         let cancelled_count = Arc::new(AtomicU32::new(0));
@@ -227,12 +233,15 @@ impl LoadTestEngine {
             }
         }
 
+        eprintln!("📋 [BURST] Pre-built {}/{} requests ({} failures)", pre_built.len(), n, build_failures);
+
         // Barrier chỉ đếm số request build thành công
         let burst_count = pre_built.len();
         if burst_count == 0 {
             return self.aggregate_results(vec![], 0.0);
         }
 
+        eprintln!("🚀 [BURST] Phase 3: Spawning {} tasks with barrier...", burst_count);
         let barrier = Arc::new(Barrier::new(burst_count));
         let results = Arc::new(Mutex::new(Vec::with_capacity(burst_count)));
         let dispatch_nanos: Arc<Vec<AtomicU64>> =
@@ -369,6 +378,7 @@ impl LoadTestEngine {
             let _ = handle.await;
         }
 
+        eprintln!("✅ [BURST] All handles completed. Aggregating...");
         let total_duration_ms = global_start.elapsed().as_secs_f64() * 1000.0;
         let was_cancelled = cancel.is_cancelled();
 

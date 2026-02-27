@@ -24,12 +24,14 @@ pub async fn run_load_test(
     state: State<'_, AppState>,
     config: TestConfig,
 ) -> Result<TestResult, String> {
+    eprintln!("🟢 [CMD] run_load_test called: {} VUs, mode={:?}, url={}", config.virtual_users, config.mode, config.url);
+
     // ⚡ CRITICAL: Cancel bất kỳ test nào đang chạy trước đó
     {
         let old_token = state.cancel_token.lock().clone();
         if let Some(old_cancel) = old_token {
+            eprintln!("🔄 [CMD] Cancelling previous run...");
             old_cancel.cancel();
-            // Cho phép tokio runtime xử lý cancellation
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
@@ -45,7 +47,11 @@ pub async fn run_load_test(
     let app_clone = app.clone();
     let cancel_clone = cancel.clone();
 
-    let result = engine
+    // ⚡ Global timeout = timeout_ms * 2 + 30s (warm-up buffer)
+    let global_timeout_ms = (config.timeout_ms * 2) + 30_000;
+    eprintln!("⏱️ [CMD] Global timeout: {}ms", global_timeout_ms);
+
+    let engine_future = engine
         .run(config, cancel_clone, move |progress, req_result| {
             let _ = app_clone.emit(
                 "test_progress",
@@ -54,8 +60,46 @@ pub async fn run_load_test(
                     "result": req_result,
                 }),
             );
-        })
-        .await;
+        });
+
+    let result = match tokio::time::timeout(
+        std::time::Duration::from_millis(global_timeout_ms),
+        engine_future,
+    ).await {
+        Ok(result) => {
+            eprintln!("✅ [CMD] Engine completed normally");
+            result
+        }
+        Err(_) => {
+            eprintln!("⏰ [CMD] GLOBAL TIMEOUT! Force-returning empty result");
+            cancel.cancel();
+            TestResult {
+                total_requests: 0,
+                success_count: 0,
+                error_count: 0,
+                cancelled_count: 0,
+                total_duration_ms: global_timeout_ms as f64,
+                requests_per_second: 0.0,
+                burst_dispatch_us: 0.0,
+                warmup_time_ms: 0.0,
+                latency_min_ms: 0.0,
+                latency_max_ms: 0.0,
+                latency_avg_ms: 0.0,
+                latency_p50_ms: 0.0,
+                latency_p90_ms: 0.0,
+                latency_p95_ms: 0.0,
+                latency_p99_ms: 0.0,
+                latency_p999_ms: 0.0,
+                race_conditions_detected: 0,
+                unique_responses: 0,
+                response_consistency: 0.0,
+                error_types: std::collections::HashMap::from([("Global timeout".to_string(), 1)]),
+                timeline: vec![],
+                status_distribution: std::collections::HashMap::new(),
+                was_cancelled: true,
+            }
+        }
+    };
 
     // Clear cancel token sau khi xong
     {
@@ -63,6 +107,7 @@ pub async fn run_load_test(
         *token_lock = None;
     }
 
+    eprintln!("🏁 [CMD] Returning result to frontend");
     Ok(result)
 }
 
