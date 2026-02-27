@@ -60,12 +60,7 @@ pub async fn run_load_test(
     // Clear cancel token sau khi xong
     {
         let mut token_lock = state.cancel_token.lock();
-        // Chỉ clear nếu token hiện tại là của run này (tránh race condition)
-        if let Some(current) = token_lock.as_ref() {
-            if current.is_cancelled() == cancel.is_cancelled() {
-                *token_lock = None;
-            }
-        }
+        *token_lock = None;
     }
 
     Ok(result)

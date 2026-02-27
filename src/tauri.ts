@@ -12,7 +12,8 @@ let currentRunGeneration = 0;
 
 /**
  * Run load test với batched progress events.
- * Dùng requestAnimationFrame để gom events → giảm re-renders từ 10K+ xuống ~600
+ * Dùng setTimeout(16ms) để gom events → giảm re-renders từ 10K+ xuống ~600
+ * (Không dùng requestAnimationFrame vì macOS WebKit bug đóng băng khi mất displayID)
  */
 export async function runLoadTest(
   config: TestConfig,
@@ -22,18 +23,18 @@ export async function runLoadTest(
   const thisGeneration = ++currentRunGeneration;
 
   let buffer: Array<{ progress: number; result: RequestResult }> = [];
-  let rafId: number | null = null;
+  let timerId: ReturnType<typeof setTimeout> | null = null;
 
   const flush = () => {
     // ⚡ CRITICAL: Chỉ flush nếu đây vẫn là run hiện tại
     if (thisGeneration !== currentRunGeneration) {
       buffer = [];
-      rafId = null;
+      timerId = null;
       return;
     }
     const batch = buffer;
     buffer = [];
-    rafId = null;
+    timerId = null;
     if (batch.length === 0) return;
     const lastProgress = batch[batch.length - 1].progress;
     onBatch(
@@ -48,8 +49,8 @@ export async function runLoadTest(
       // Bỏ qua events từ run cũ
       if (thisGeneration !== currentRunGeneration) return;
       buffer.push(event.payload);
-      if (rafId === null) {
-        rafId = requestAnimationFrame(flush);
+      if (timerId === null) {
+        timerId = setTimeout(flush, 16); // 16ms = ~60fps
       }
     },
   );
@@ -57,7 +58,7 @@ export async function runLoadTest(
   try {
     const result = await invoke<TestResult>("run_load_test", { config });
     // Flush remaining buffered events (chỉ nếu vẫn là run hiện tại)
-    if (rafId !== null) cancelAnimationFrame(rafId);
+    if (timerId !== null) clearTimeout(timerId);
     if (buffer.length > 0 && thisGeneration === currentRunGeneration) flush();
     return result;
   } finally {
