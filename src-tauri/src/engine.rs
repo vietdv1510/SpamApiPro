@@ -8,6 +8,38 @@ use tokio_util::sync::CancellationToken;
 use hdrhistogram::Histogram;
 use parking_lot::Mutex;
 
+/// Classify reqwest errors into human-readable short labels
+fn classify_error(e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        "Timeout".to_string()
+    } else if e.is_connect() {
+        let msg = e.to_string();
+        if msg.contains("dns") || msg.contains("resolve") {
+            "DNS Error".to_string()
+        } else if msg.contains("refused") {
+            "Connection Refused".to_string()
+        } else if msg.contains("reset") {
+            "Connection Reset".to_string()
+        } else {
+            "Connection Error".to_string()
+        }
+    } else if e.is_request() {
+        let msg = e.to_string();
+        if msg.contains("certificate") || msg.contains("ssl") || msg.contains("tls") {
+            "SSL Error".to_string()
+        } else {
+            format!("Request Error: {}", msg.chars().take(60).collect::<String>())
+        }
+    } else if e.is_body() {
+        "Body Read Error".to_string()
+    } else if e.is_decode() {
+        "Decode Error".to_string()
+    } else {
+        let msg = e.to_string();
+        msg.chars().take(80).collect::<String>()
+    }
+}
+
 /// Config cho 1 lần chạy test
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TestConfig {
@@ -553,7 +585,7 @@ impl LoadTestEngine {
                                     success: false,
                                     status_code: None,
                                     latency_ms: start.elapsed().as_secs_f64() * 1000.0,
-                                    error: Some(e.to_string()),
+                                    error: Some(classify_error(&e)),
                                     response_size_bytes: 0,
                                     timestamp_ms: now_epoch,
                                     response_body: None,
@@ -713,7 +745,7 @@ impl LoadTestEngine {
                             Err(e) => RequestResult {
                                 id, success: false, status_code: None,
                                 latency_ms: start.elapsed().as_secs_f64()*1000.0,
-                                error: Some(e.to_string()), response_size_bytes: 0, timestamp_ms: now_epoch, response_body: None
+                                error: Some(classify_error(&e)), response_size_bytes: 0, timestamp_ms: now_epoch, response_body: None
                             }
                         }
                     };
@@ -828,9 +860,9 @@ impl LoadTestEngine {
                             (false, res)
                         }
                         resp = client.execute(request) => {
-                            let (is_ok, status) = match &resp {
-                                Ok(r) => (r.status().is_success(), Some(r.status().as_u16())),
-                                Err(_) => (false, None),
+                            let (is_ok, status, conn_err) = match &resp {
+                                Ok(r) => (r.status().is_success(), Some(r.status().as_u16()), None),
+                                Err(e) => (false, None, Some(classify_error(e))),
                             };
                             let mut body_len = 0;
                             let mut body_preview = None;
@@ -851,12 +883,20 @@ impl LoadTestEngine {
                                 }
                             }
 
+                            let error_msg = if is_ok {
+                                None
+                            } else if let Some(ce) = conn_err {
+                                Some(ce)
+                            } else {
+                                Some(format!("HTTP {}", status.unwrap_or(0)))
+                            };
+
                             let res = RequestResult {
                                 id, 
                                 success: is_ok, 
                                 status_code: status, 
                                 latency_ms: start.elapsed().as_secs_f64()*1000.0,
-                                error: if is_ok { None } else { Some("Error".to_string()) }, 
+                                error: error_msg, 
                                 response_size_bytes: body_len, 
                                 timestamp_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64, 
                                 response_body: body_preview

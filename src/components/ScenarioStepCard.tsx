@@ -495,12 +495,12 @@ export function ScenarioStepCard({
                 <IconPlus /> Add
               </button>
             </div>
-            {step.assertions.length === 0 && (
+            {(step.assertions?.length || 0) === 0 && (
               <div className="text-[10px] text-gray-600 italic">
                 No assertions — step passes if success rate ≥ 95%
               </div>
             )}
-            {step.assertions.map((a, ai) => (
+            {step.assertions?.map((a, ai) => (
               <div
                 key={a.id}
                 className={`flex gap-1.5 items-center mb-1.5 ${a.passed === true ? "bg-success/5 border border-success/20 rounded-lg px-2 py-1" : a.passed === false ? "bg-red-500/5 border border-red-500/20 rounded-lg px-2 py-1" : ""}`}
