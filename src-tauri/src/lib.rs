@@ -12,6 +12,7 @@ use tauri::Manager;
 pub fn run() {
     if let Err(e) = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_fs::init())
         .setup(|app| {
             // Lấy app data dir — nơi lưu DB an toàn theo OS
             let app_data_dir = app

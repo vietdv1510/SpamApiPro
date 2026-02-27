@@ -1,9 +1,12 @@
+import { writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
+import { open } from "@tauri-apps/plugin-shell";
+import { appDataDir } from "@tauri-apps/api/path";
 import type { TestResult } from "../store";
 
 /**
- * Export test results thành HTML report đẹp, mở tab mới để sếp in/save PDF
+ * Export test results thành HTML report — lưu file + mở bằng browser hệ thống
  */
-export function exportReportHTML(
+export async function exportReportHTML(
   result: TestResult,
   meta?: { url?: string; method?: string; mode?: string },
 ) {
@@ -12,6 +15,7 @@ export function exportReportHTML(
     r.total_requests > 0 ? (r.success_count / r.total_requests) * 100 : 0;
   const raceStatus = r.race_conditions_detected > 0 ? "⚠️ DETECTED" : "✅ SAFE";
   const now = new Date().toLocaleString("vi-VN");
+  const fileTs = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 
   const statusRows = Object.entries(r.status_distribution)
     .filter(([k]) => /^\d{3}$/.test(k))
@@ -90,7 +94,6 @@ export function exportReportHTML(
     <div class="meta-item"><span class="meta-label">Duration: </span><span class="meta-value">${(r.total_duration_ms / 1000).toFixed(2)}s</span></div>
   </div>
 
-  <!-- Summary -->
   <div class="grid grid-3">
     <div class="card">
       <div class="card-value white">${r.total_requests.toLocaleString()}</div>
@@ -121,7 +124,6 @@ export function exportReportHTML(
     </div>
   </div>
 
-  <!-- Latency -->
   <div class="section">
     <div class="section-title">Latency Percentiles</div>
     <div class="grid grid-5">
@@ -145,7 +147,6 @@ export function exportReportHTML(
     </div>
   </div>
 
-  <!-- Race Conditions -->
   <div class="section">
     <div class="section-title">Race Condition Analysis</div>
     <div class="${r.race_conditions_detected > 0 ? "fail" : "pass"}">
@@ -160,7 +161,6 @@ export function exportReportHTML(
     </div>
   </div>
 
-  <!-- Status Distribution -->
   ${
     statusRows
       ? `
@@ -171,7 +171,6 @@ export function exportReportHTML(
       : ""
   }
 
-  <!-- Errors -->
   ${
     errorRows
       ? `
@@ -190,8 +189,19 @@ export function exportReportHTML(
 </body>
 </html>`;
 
-  // Mở tab mới với report — sếp có thể Ctrl+P để in PDF
-  const blob = new Blob([html], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  window.open(url, "_blank");
+  // Lưu file vào app data dir rồi mở bằng browser hệ thống
+  const fileName = `report-${fileTs}.html`;
+  const dataDir = await appDataDir();
+  const filePath = `${dataDir}reports`;
+
+  // Tạo thư mục reports nếu cần
+  try {
+    await mkdir(filePath, { recursive: true });
+  } catch {
+    /* already exists */
+  }
+
+  const fullPath = `${filePath}/${fileName}`;
+  await writeTextFile(fullPath, html);
+  await open(fullPath);
 }
