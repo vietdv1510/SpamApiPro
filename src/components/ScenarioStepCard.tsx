@@ -11,6 +11,27 @@ import {
 import { parseCurl } from "../tauri";
 import { showToast } from "./Dialogs";
 
+/** Assertion types */
+export type AssertionType =
+  | "status_code_equals"
+  | "body_contains"
+  | "latency_p95_lt"
+  | "response_time_lt";
+
+export interface Assertion {
+  id: string;
+  type: AssertionType;
+  value: string;
+  passed?: boolean;
+}
+
+export const ASSERTION_LABELS: Record<AssertionType, string> = {
+  status_code_equals: "Status Code =",
+  body_contains: "Body Contains",
+  latency_p95_lt: "P95 Latency <",
+  response_time_lt: "Avg Response <",
+};
+
 /** Một bước trong scenario */
 export interface ScenarioStep {
   id: string;
@@ -26,6 +47,7 @@ export interface ScenarioStep {
   duration_secs: number | null;
   iterations: number | null;
   ignore_ssl_errors: boolean;
+  assertions: Assertion[];
   status: "pending" | "running" | "passed" | "failed" | "skipped";
   summary?: string;
 }
@@ -430,6 +452,113 @@ export function ScenarioStepCard({
               />
             </div>
           )}
+
+          {/* Variable Injection Hint */}
+          <div className="bg-secondary/5 border border-secondary/20 rounded-lg px-3 py-2">
+            <div className="text-[10px] font-bold text-secondary mb-1">
+              🔗 Variable Injection
+            </div>
+            <div className="text-[9px] text-gray-500 leading-relaxed">
+              Use{" "}
+              <code className="text-secondary/80 bg-bg-700 px-1 rounded">
+                {"{{stepName.status}}"}
+              </code>
+              ,{" "}
+              <code className="text-secondary/80 bg-bg-700 px-1 rounded">
+                {"{{stepName.body}}"}
+              </code>
+              , or{" "}
+              <code className="text-secondary/80 bg-bg-700 px-1 rounded">
+                {"{{stepName.body.field}}"}
+              </code>{" "}
+              in URL, Headers, or Body to reference previous steps.
+            </div>
+          </div>
+
+          {/* Assertions */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-[10px] text-gray-600 font-semibold uppercase tracking-wider">
+                ✅ Assertions
+              </label>
+              <button
+                onClick={() => {
+                  const newA: Assertion = {
+                    id: crypto.randomUUID(),
+                    type: "status_code_equals",
+                    value: "200",
+                  };
+                  onUpdate(step.id, { assertions: [...step.assertions, newA] });
+                }}
+                className="text-[10px] text-gray-600 hover:text-primary transition-colors flex items-center gap-1"
+              >
+                <IconPlus /> Add
+              </button>
+            </div>
+            {step.assertions.length === 0 && (
+              <div className="text-[10px] text-gray-600 italic">
+                No assertions — step passes if success rate ≥ 95%
+              </div>
+            )}
+            {step.assertions.map((a, ai) => (
+              <div
+                key={a.id}
+                className={`flex gap-1.5 items-center mb-1.5 ${a.passed === true ? "bg-success/5 border border-success/20 rounded-lg px-2 py-1" : a.passed === false ? "bg-red-500/5 border border-red-500/20 rounded-lg px-2 py-1" : ""}`}
+              >
+                {a.passed !== undefined && (
+                  <span
+                    className={`text-[10px] shrink-0 ${a.passed ? "text-success" : "text-danger"}`}
+                  >
+                    {a.passed ? "✓" : "✗"}
+                  </span>
+                )}
+                <select
+                  className="bg-bg-700 border border-bg-500 rounded px-1.5 py-1 text-[10px] text-gray-300"
+                  value={a.type}
+                  onChange={(e) => {
+                    const u = [...step.assertions];
+                    u[ai] = { ...a, type: e.target.value as AssertionType };
+                    onUpdate(step.id, { assertions: u });
+                  }}
+                >
+                  {Object.entries(ASSERTION_LABELS).map(([k, l]) => (
+                    <option key={k} value={k}>
+                      {l}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  className="flex-1 bg-bg-700 border border-bg-500 rounded px-2 py-1 text-[10px] font-mono text-gray-300 outline-none focus:border-primary/50"
+                  value={a.value}
+                  placeholder={
+                    a.type === "status_code_equals"
+                      ? "200"
+                      : a.type === "body_contains"
+                        ? '"success"'
+                        : "500"
+                  }
+                  onChange={(e) => {
+                    const u = [...step.assertions];
+                    u[ai] = { ...a, value: e.target.value };
+                    onUpdate(step.id, { assertions: u });
+                  }}
+                />
+                <span className="text-[9px] text-gray-600 shrink-0">
+                  {a.type.includes("_lt") ? "ms" : ""}
+                </span>
+                <button
+                  onClick={() =>
+                    onUpdate(step.id, {
+                      assertions: step.assertions.filter((x) => x.id !== a.id),
+                    })
+                  }
+                  className="text-gray-600 hover:text-red-400 w-5 flex items-center justify-center shrink-0"
+                >
+                  <IconX />
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

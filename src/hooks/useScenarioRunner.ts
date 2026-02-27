@@ -1,7 +1,7 @@
 import { useState, useCallback } from "react";
 import { runLoadTest } from "../tauri";
 import { showToast } from "../components/Dialogs";
-import type { ScenarioStep } from "../components/ScenarioStepCard";
+import type { ScenarioStep, Assertion } from "../components/ScenarioStepCard";
 import type { TestResult } from "../store";
 
 export interface StepResult {
@@ -15,6 +15,120 @@ export interface StepResult {
   totalReqs?: number;
   error?: string;
 }
+
+// ─── Variable Injection Context ───
+interface StepContext {
+  status: number | null;
+  body: string;
+  bodyJson: Record<string, unknown> | null;
+}
+
+/**
+ * Resolve {{stepName.field}} variables in a string.
+ * Supported patterns:
+ *   {{stepName.status}}       → HTTP status code (e.g. "200")
+ *   {{stepName.body}}         → raw response body text
+ *   {{stepName.body.field}}   → JSON field from body (dot notation)
+ */
+function resolveVariables(
+  text: string,
+  ctx: Record<string, StepContext>,
+): string {
+  return text.replace(/\{\{(\w+)\.([^}]+)\}\}/g, (match, stepName, path) => {
+    const stepCtx = ctx[stepName];
+    if (!stepCtx) return match; // leave unresolved
+
+    if (path === "status") {
+      return stepCtx.status !== null ? String(stepCtx.status) : match;
+    }
+    if (path === "body") {
+      return stepCtx.body || match;
+    }
+    // body.field.nested.path
+    if (path.startsWith("body.")) {
+      const jsonPath = path.slice(5); // remove "body."
+      if (!stepCtx.bodyJson) return match;
+      const value = getNestedValue(stepCtx.bodyJson, jsonPath);
+      return value !== undefined ? String(value) : match;
+    }
+    return match;
+  });
+}
+
+function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
+  const keys = path.split(".");
+  let current: unknown = obj;
+  for (const key of keys) {
+    if (
+      current === null ||
+      current === undefined ||
+      typeof current !== "object"
+    )
+      return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+/**
+ * Inject variables into step config (URL, headers, body)
+ */
+function injectVariables(
+  step: ScenarioStep,
+  ctx: Record<string, StepContext>,
+): { url: string; headers: Record<string, string>; body: string | null } {
+  const url = resolveVariables(step.url, ctx);
+  const headers: Record<string, string> = {};
+  for (const [k, v] of Object.entries(step.headers)) {
+    headers[resolveVariables(k, ctx)] = resolveVariables(v, ctx);
+  }
+  const body = step.body ? resolveVariables(step.body, ctx) : null;
+  return { url, headers, body };
+}
+
+// ─── Assertion Evaluator ───
+
+function evaluateAssertions(
+  assertions: Assertion[],
+  result: TestResult,
+): Assertion[] {
+  return assertions.map((a) => {
+    let passed = false;
+    switch (a.type) {
+      case "status_code_equals": {
+        // Check if the most common status code matches
+        const target = a.value.trim();
+        const exactKey = target;
+        passed =
+          (result.status_distribution[exactKey] ?? 0) > 0 &&
+          (result.status_distribution[exactKey] ?? 0) >=
+            result.total_requests * 0.95;
+        break;
+      }
+      case "body_contains": {
+        // Check if any response body in timeline contains the value
+        const needle = a.value.trim();
+        passed = result.timeline.some(
+          (r) => r.response_body && r.response_body.includes(needle),
+        );
+        break;
+      }
+      case "latency_p95_lt": {
+        const threshold = parseFloat(a.value);
+        passed = !isNaN(threshold) && result.latency_p95_ms < threshold;
+        break;
+      }
+      case "response_time_lt": {
+        const threshold = parseFloat(a.value);
+        passed = !isNaN(threshold) && result.latency_avg_ms < threshold;
+        break;
+      }
+    }
+    return { ...a, passed };
+  });
+}
+
+// ─── Hook ───
 
 interface UseScenarioRunnerReturn {
   isRunning: boolean;
@@ -70,12 +184,18 @@ export function useScenarioRunner(): UseScenarioRunnerReturn {
         })),
       );
 
-      // Reset all step statuses
+      // Reset all step statuses + assertion results
       steps.forEach((s) =>
-        onStepUpdate(s.id, { status: "pending", summary: undefined }),
+        onStepUpdate(s.id, {
+          status: "pending",
+          summary: undefined,
+          assertions: s.assertions.map((a) => ({ ...a, passed: undefined })),
+        }),
       );
 
       let allPassed = true;
+      // Variable injection context: stepName -> response data
+      const varContext: Record<string, StepContext> = {};
 
       for (let i = 0; i < steps.length; i++) {
         const step = steps[i];
@@ -100,12 +220,15 @@ export function useScenarioRunner(): UseScenarioRunnerReturn {
         }
 
         try {
+          // 🔗 Variable Injection — resolve {{stepName.field}} in URL/headers/body
+          const injected = injectVariables(step, varContext);
+
           const result = await runLoadTest(
             {
-              url: step.url,
+              url: injected.url,
               method: step.method,
-              headers: step.headers,
-              body: step.body?.trim() || null,
+              headers: injected.headers,
+              body: injected.body?.trim() || null,
               virtual_users: step.virtual_users,
               mode: step.mode,
               timeout_ms: step.timeout_ms,
@@ -117,16 +240,48 @@ export function useScenarioRunner(): UseScenarioRunnerReturn {
             () => {},
           );
 
+          // 🔗 Store result context for variable injection in later steps
+          const firstSuccess = result.timeline.find((r) => r.success);
+          varContext[step.name] = {
+            status: firstSuccess?.status_code ?? null,
+            body: firstSuccess?.response_body ?? "",
+            bodyJson: (() => {
+              try {
+                return JSON.parse(firstSuccess?.response_body ?? "");
+              } catch {
+                return null;
+              }
+            })(),
+          };
+
           const successRate =
             result.total_requests > 0
               ? (result.success_count / result.total_requests) * 100
               : 0;
-          const passed = successRate >= 95;
+
+          // ✅ Evaluate assertions
+          let passed: boolean;
+          let evaluatedAssertions: Assertion[] = [];
+
+          if (step.assertions.length > 0) {
+            evaluatedAssertions = evaluateAssertions(step.assertions, result);
+            passed = evaluatedAssertions.every((a) => a.passed);
+          } else {
+            // Default: pass if success rate >= 95%
+            passed = successRate >= 95;
+          }
+
           if (!passed) allPassed = false;
+
+          const assertionSummary =
+            step.assertions.length > 0
+              ? ` · ${evaluatedAssertions.filter((a) => a.passed).length}/${evaluatedAssertions.length} assertions`
+              : "";
 
           onStepUpdate(step.id, {
             status: passed ? "passed" : "failed",
-            summary: `${successRate.toFixed(0)}% · ${result.requests_per_second.toFixed(0)} RPS · P95: ${result.latency_p95_ms.toFixed(0)}ms`,
+            summary: `${successRate.toFixed(0)}% · ${result.requests_per_second.toFixed(0)} RPS · P95: ${result.latency_p95_ms.toFixed(0)}ms${assertionSummary}`,
+            assertions: evaluatedAssertions,
           });
 
           setRunResults((prev) =>

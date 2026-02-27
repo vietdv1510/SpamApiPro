@@ -32,6 +32,7 @@ function createStep(name?: string): ScenarioStep {
     timeout_ms: 10000,
     think_time_ms: 0,
     ignore_ssl_errors: true,
+    assertions: [],
     duration_secs: null,
     iterations: 1,
     status: "pending",
