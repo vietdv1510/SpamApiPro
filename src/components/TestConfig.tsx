@@ -103,8 +103,13 @@ export function TestConfig() {
   };
 
   const handleRun = async () => {
+    console.log(
+      "[handleRun] clicked, runStatus =",
+      useAppStore.getState().runStatus,
+    );
     setRunError(null);
     const result = await run();
+    console.log("[handleRun] run() returned:", result);
     if (result.error) setRunError(result.error);
   };
 

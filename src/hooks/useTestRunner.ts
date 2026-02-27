@@ -14,15 +14,18 @@ function isValidUrl(url: string): boolean {
 
 export function useTestRunner() {
   const run = useCallback(async () => {
+    console.log("[run] START");
     const state = useAppStore.getState();
     const { config, getEffectiveHeaders } = state;
 
     if (!isValidUrl(config.url)) {
+      console.log("[run] Invalid URL");
       useAppStore.setState({ runStatus: "error" });
       return { error: "Invalid URL — must start with http:// or https://" };
     }
 
     // Reset hoàn toàn state trong 1 lần set() duy nhất — atomic, không bị batch lẫn
+    console.log("[run] Resetting state...");
     useAppStore.setState({
       runStatus: "running",
       activeTab: "test",
@@ -39,6 +42,7 @@ export function useTestRunner() {
     };
 
     try {
+      console.log("[run] Calling runLoadTest...");
       const result = await runLoadTest(effectiveConfig, (progress, batch) => {
         // Chỉ cập nhật nếu vẫn đang running
         const currentStatus = useAppStore.getState().runStatus;
@@ -48,6 +52,10 @@ export function useTestRunner() {
         }
       });
 
+      console.log(
+        "[run] runLoadTest resolved, result.total_requests =",
+        result.total_requests,
+      );
       useAppStore.getState().setCurrentResult(result);
       useAppStore.getState().addToHistory(effectiveConfig, result);
       useAppStore.setState({
@@ -57,6 +65,7 @@ export function useTestRunner() {
       return { error: null };
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
+      console.error("[run] ERROR:", msg);
       useAppStore.setState({ runStatus: "error" });
       return { error: msg };
     }

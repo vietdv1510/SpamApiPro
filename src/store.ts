@@ -186,10 +186,14 @@ export const useAppStore = create<AppState>()(
           history: [
             {
               config,
-              result,
+              // ⚡ Strip heavy data — timeline chứa response_body sẽ phá localStorage quota
+              result: {
+                ...result,
+                timeline: [], // Không persist timeline (mỗi entry ~1KB * 1000 = 1MB)
+              },
               timestamp: new Date().toLocaleTimeString("vi-VN"),
             },
-            ...s.history.slice(0, 19),
+            ...s.history.slice(0, 9), // Giới hạn 10 entries
           ],
         })),
 
@@ -222,6 +226,35 @@ export const useAppStore = create<AppState>()(
       // Chỉ persist history — giữ data qua sessions
       partialize: (state) =>
         ({ history: state.history }) as unknown as AppState,
+      // Xử lý lỗi storage quota
+      storage: {
+        getItem: (name) => {
+          try {
+            const str = localStorage.getItem(name);
+            return str ? JSON.parse(str) : null;
+          } catch {
+            localStorage.removeItem(name);
+            return null;
+          }
+        },
+        setItem: (name, value) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value));
+          } catch {
+            // QuotaExceededError — xóa storage cũ và thử lại
+            try {
+              localStorage.removeItem(name);
+              localStorage.setItem(name, JSON.stringify(value));
+            } catch {
+              // Bỏ qua — không crash app vì storage
+              console.warn(
+                "[store] localStorage quota exceeded, skipping persist",
+              );
+            }
+          }
+        },
+        removeItem: (name) => localStorage.removeItem(name),
+      },
     },
   ),
 );
