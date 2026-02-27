@@ -181,75 +181,84 @@ impl LoadTestEngine {
             return Self::empty_result(true);
         }
 
-        // ── PHASE 2: BURST ──
-        let barrier = Arc::new(Barrier::new(n));
-        let results = Arc::new(Mutex::new(Vec::with_capacity(n)));
+        // ── PHASE 2: PRE-BUILD ALL REQUESTS ──
         let callback = Arc::new(progress_callback);
-        let dispatch_nanos: Arc<Vec<AtomicU64>> =
-            Arc::new((0..n).map(|_| AtomicU64::new(0)).collect());
         let completed = Arc::new(AtomicU32::new(0));
         let cancelled_count = Arc::new(AtomicU32::new(0));
-
         let global_start = Instant::now();
         let config = Arc::new(config);
-        let mut handles = Vec::with_capacity(n);
+
+        // Pre-build tất cả requests TRƯỚC khi spawn — tránh barrier deadlock
+        let mut pre_built: Vec<(usize, reqwest::Request)> = Vec::with_capacity(n);
+        let mut build_failures = 0u32;
 
         for i in 0..n {
+            let mut builder = match config.method.to_uppercase().as_str() {
+                "GET" => self.client.get(&config.url),
+                "POST" => self.client.post(&config.url),
+                "PUT" => self.client.put(&config.url),
+                "DELETE" => self.client.delete(&config.url),
+                "PATCH" => self.client.patch(&config.url),
+                _ => self.client.get(&config.url),
+            };
+            for (key, value) in &config.headers {
+                builder = builder.header(key, value);
+            }
+            if let Some(body) = &config.body {
+                builder = builder.body(body.clone());
+            }
+            match builder.build() {
+                Ok(req) => pre_built.push((i, req)),
+                Err(e) => {
+                    build_failures += 1;
+                    let result = RequestResult {
+                        id: i as u32,
+                        success: false,
+                        status_code: None,
+                        latency_ms: 0.0,
+                        error: Some(format!("Build error: {}", e)),
+                        response_size_bytes: 0,
+                        timestamp_ms: 0,
+                        response_body: None,
+                    };
+                    let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
+                    callback(done as f32 / n as f32 * 100.0, result);
+                }
+            }
+        }
+
+        // Barrier chỉ đếm số request build thành công
+        let burst_count = pre_built.len();
+        if burst_count == 0 {
+            return self.aggregate_results(vec![], 0.0);
+        }
+
+        let barrier = Arc::new(Barrier::new(burst_count));
+        let results = Arc::new(Mutex::new(Vec::with_capacity(burst_count)));
+        let dispatch_nanos: Arc<Vec<AtomicU64>> =
+            Arc::new((0..burst_count).map(|_| AtomicU64::new(0)).collect());
+        let mut handles = Vec::with_capacity(burst_count);
+
+        for (slot, (orig_id, request)) in pre_built.into_iter().enumerate() {
             let barrier = Arc::clone(&barrier);
             let results = Arc::clone(&results);
-            let config = Arc::clone(&config);
             let client = self.client.clone();
             let callback = Arc::clone(&callback);
             let dispatch_nanos = Arc::clone(&dispatch_nanos);
             let completed = Arc::clone(&completed);
             let cancelled_count = Arc::clone(&cancelled_count);
             let cancel = cancel.clone();
+            let n_total = n;
 
             let handle = tokio::spawn(async move {
-                // 🏗️ PRE-BUILD request TRƯỚC barrier
-                let mut builder = match config.method.to_uppercase().as_str() {
-                    "GET" => client.get(&config.url),
-                    "POST" => client.post(&config.url),
-                    "PUT" => client.put(&config.url),
-                    "DELETE" => client.delete(&config.url),
-                    "PATCH" => client.patch(&config.url),
-                    _ => client.get(&config.url),
-                };
-                for (key, value) in &config.headers {
-                    builder = builder.header(key, value);
-                }
-                if let Some(body) = &config.body {
-                    builder = builder.body(body.clone());
-                }
-
-                let request = match builder.build() {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let result = RequestResult {
-                            id: i as u32,
-                            success: false,
-                            status_code: None,
-                            latency_ms: 0.0,
-                            error: Some(format!("Build error: {}", e)),
-                            response_size_bytes: 0,
-                            timestamp_ms: 0,
-                            response_body: None,
-                        };
-                        let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                        callback(done as f32 / n as f32 * 100.0, result.clone());
-                        results.lock().push(result);
-                        return;
-                    }
-                };
-
-                // ⏳ Barrier (No cancel select here, to avoid deadlocking other threads)
+                // ⏳ Barrier — tất cả task đều PHẢI đến đây (không có early return trước barrier)
                 barrier.wait().await;
 
                 if cancel.is_cancelled() {
                     cancelled_count.fetch_add(1, Ordering::Relaxed);
                     let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
                     let result = RequestResult {
-                        id: i as u32,
+                        id: orig_id as u32,
                         success: false,
                         status_code: None,
                         latency_ms: 0.0,
@@ -258,14 +267,14 @@ impl LoadTestEngine {
                         timestamp_ms: 0,
                         response_body: None,
                     };
-                    callback(done as f32 / n as f32 * 100.0, result.clone());
+                    callback(done as f32 / n_total as f32 * 100.0, result.clone());
                     results.lock().push(result);
                     return;
                 }
 
                 // ⚡ SAU barrier — fire + ghi timestamp
                 let fired_at_ns = global_start.elapsed().as_nanos() as u64;
-                dispatch_nanos[i].store(fired_at_ns, Ordering::Relaxed);
+                dispatch_nanos[slot].store(fired_at_ns, Ordering::Relaxed);
 
                 let start = Instant::now();
                 let now_epoch = std::time::SystemTime::now()
@@ -279,7 +288,7 @@ impl LoadTestEngine {
                     _ = cancel.cancelled() => {
                         cancelled_count.fetch_add(1, Ordering::Relaxed);
                         RequestResult {
-                            id: i as u32,
+                            id: orig_id as u32,
                             success: false,
                             status_code: None,
                             latency_ms: start.elapsed().as_secs_f64() * 1000.0,
@@ -314,7 +323,7 @@ impl LoadTestEngine {
                                 };
                                 let success = status >= 200 && status < 300;
                                 RequestResult {
-                                    id: i as u32,
+                                    id: orig_id as u32,
                                     success,
                                     status_code: Some(status),
                                     latency_ms,
@@ -334,7 +343,7 @@ impl LoadTestEngine {
                                     e.to_string()
                                 };
                                 RequestResult {
-                                    id: i as u32,
+                                    id: orig_id as u32,
                                     success: false,
                                     status_code: None,
                                     latency_ms,
@@ -349,7 +358,7 @@ impl LoadTestEngine {
                 };
 
                 let done = completed.fetch_add(1, Ordering::Relaxed) + 1;
-                callback(done as f32 / n as f32 * 100.0, result.clone());
+                callback(done as f32 / n_total as f32 * 100.0, result.clone());
                 results.lock().push(result);
             });
 
