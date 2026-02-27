@@ -22,9 +22,14 @@ export function useTestRunner() {
       return { error: "Invalid URL — must start with http:// or https://" };
     }
 
-    useAppStore.setState({ runStatus: "running", activeTab: "test" });
+    // Reset hoàn toàn state trước khi chạy
+    useAppStore.setState({
+      runStatus: "running",
+      activeTab: "test",
+      progress: 0,
+      currentResult: null,
+    });
     state.resetLive();
-    state.setCurrentResult(null);
 
     const effectiveConfig = {
       ...config,
@@ -34,8 +39,12 @@ export function useTestRunner() {
 
     try {
       const result = await runLoadTest(effectiveConfig, (progress, batch) => {
-        useAppStore.getState().setProgress(progress);
-        useAppStore.getState().addLiveResults(batch);
+        // Chỉ cập nhật nếu vẫn đang running
+        const currentStatus = useAppStore.getState().runStatus;
+        if (currentStatus === "running" || currentStatus === "cancelling") {
+          useAppStore.getState().setProgress(progress);
+          useAppStore.getState().addLiveResults(batch);
+        }
       });
 
       useAppStore.getState().setCurrentResult(result);
@@ -53,11 +62,18 @@ export function useTestRunner() {
   }, []);
 
   const stop = useCallback(async () => {
+    const currentStatus = useAppStore.getState().runStatus;
+    if (currentStatus !== "running") return;
+
     try {
       useAppStore.setState({ runStatus: "cancelling" });
       await stopTest();
     } catch {
-      // Test may have already finished
+      // Nếu stop thất bại, reset status để user có thể thao tác tiếp
+      const stillCancelling = useAppStore.getState().runStatus === "cancelling";
+      if (stillCancelling) {
+        useAppStore.setState({ runStatus: "cancelled" });
+      }
     }
   }, []);
 

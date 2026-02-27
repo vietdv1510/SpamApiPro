@@ -17,13 +17,23 @@ impl AppState {
     }
 }
 
-/// Command chạy load test — hỗ trợ cancel
+/// Command chạy load test — hỗ trợ cancel + auto-cancel previous run
 #[tauri::command]
 pub async fn run_load_test(
     app: AppHandle,
     state: State<'_, AppState>,
     config: TestConfig,
 ) -> Result<TestResult, String> {
+    // ⚡ CRITICAL: Cancel bất kỳ test nào đang chạy trước đó
+    {
+        let old_token = state.cancel_token.lock().clone();
+        if let Some(old_cancel) = old_token {
+            old_cancel.cancel();
+            // Cho phép tokio runtime xử lý cancellation
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+
     // Tạo cancel token mới cho run này
     let cancel = CancellationToken::new();
     {
@@ -33,9 +43,10 @@ pub async fn run_load_test(
 
     let engine = LoadTestEngine::new(config.timeout_ms)?;
     let app_clone = app.clone();
+    let cancel_clone = cancel.clone();
 
     let result = engine
-        .run(config, cancel, move |progress, req_result| {
+        .run(config, cancel_clone, move |progress, req_result| {
             let _ = app_clone.emit(
                 "test_progress",
                 serde_json::json!({
@@ -49,7 +60,12 @@ pub async fn run_load_test(
     // Clear cancel token sau khi xong
     {
         let mut token_lock = state.cancel_token.lock();
-        *token_lock = None;
+        // Chỉ clear nếu token hiện tại là của run này (tránh race condition)
+        if let Some(current) = token_lock.as_ref() {
+            if current.is_cancelled() == cancel.is_cancelled() {
+                *token_lock = None;
+            }
+        }
     }
 
     Ok(result)
@@ -63,7 +79,8 @@ pub async fn stop_test(state: State<'_, AppState>) -> Result<(), String> {
         cancel.cancel();
         Ok(())
     } else {
-        Err("No test is currently running".to_string())
+        // Không có test nào đang chạy — vẫn trả OK để frontend không bị lỗi
+        Ok(())
     }
 }
 
