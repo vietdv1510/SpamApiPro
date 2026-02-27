@@ -1,38 +1,23 @@
-import { useState, useCallback, useEffect } from "react";
-import {
-  useAppStore,
-  type HttpMethod,
-  type TestMode,
-  type TestResult,
-} from "../store";
-import { runLoadTest, parseCurl } from "../tauri";
+import { useState, useEffect } from "react";
+import { useAppStore } from "../store";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog, showToast } from "./Dialogs";
 import { ResultsDashboard } from "./ResultsDashboard";
+import { ScenarioStepCard } from "./ScenarioStepCard";
+import type { ScenarioStep } from "./ScenarioStepCard";
+import { useScenarioRunner } from "../hooks/useScenarioRunner";
+import { IconSave, IconImport, IconPlus } from "./ScenarioIcons";
+import type { HttpMethod, TestMode } from "../store";
 
-/** Một bước trong scenario */
-interface ScenarioStep {
-  id: string;
-  name: string;
-  url: string;
-  method: HttpMethod;
-  headers: Record<string, string>;
-  body: string | null;
-  virtual_users: number;
-  mode: TestMode;
-  timeout_ms: number;
-  think_time_ms: number;
-  duration_secs: number | null;
-  iterations: number | null;
-  status: "pending" | "running" | "passed" | "failed" | "skipped";
-  summary?: string;
-}
+// ─── Types ───
 
 interface SavedScenario {
   id: number;
   name: string;
   steps: ScenarioStep[];
 }
+
+// ─── Helpers ───
 
 function createStep(name?: string): ScenarioStep {
   return {
@@ -52,168 +37,8 @@ function createStep(name?: string): ScenarioStep {
   };
 }
 
-function moveItem<T>(arr: T[], from: number, to: number): T[] {
-  const result = [...arr];
-  const [item] = result.splice(from, 1);
-  result.splice(to, 0, item);
-  return result;
-}
-
-const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "DELETE", "PATCH"];
-const METHOD_COLORS: Record<string, string> = {
-  GET: "text-success",
-  POST: "text-primary",
-  PUT: "text-amber-400",
-  DELETE: "text-danger",
-  PATCH: "text-purple-400",
-};
-
-// ─── SVG Icon Components ───
-function IconSave() {
-  return (
-    <svg
-      className="w-3.5 h-3.5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-      <polyline points="17 21 17 13 7 13 7 21" />
-      <polyline points="7 3 7 8 15 8" />
-    </svg>
-  );
-}
-function IconImport() {
-  return (
-    <svg
-      className="w-3.5 h-3.5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
-    </svg>
-  );
-}
-function IconTerminal() {
-  return (
-    <svg
-      className="w-3.5 h-3.5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polyline points="4 17 10 11 4 5" />
-      <line x1="12" y1="19" x2="20" y2="19" />
-    </svg>
-  );
-}
-function IconPlus() {
-  return (
-    <svg
-      className="w-3 h-3"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="12" y1="5" x2="12" y2="19" />
-      <line x1="5" y1="12" x2="19" y2="12" />
-    </svg>
-  );
-}
-function IconCopy() {
-  return (
-    <svg
-      className="w-3.5 h-3.5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-    </svg>
-  );
-}
-function IconX() {
-  return (
-    <svg
-      className="w-3.5 h-3.5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="18" y1="6" x2="6" y2="18" />
-      <line x1="6" y1="6" x2="18" y2="18" />
-    </svg>
-  );
-}
-function IconChevron({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polyline points="6 9 12 15 18 9" />
-    </svg>
-  );
-}
-function IconUp() {
-  return (
-    <svg
-      className="w-3 h-3"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polyline points="18 15 12 9 6 15" />
-    </svg>
-  );
-}
-function IconDown() {
-  return (
-    <svg
-      className="w-3 h-3"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <polyline points="6 9 12 15 18 9" />
-    </svg>
-  );
-}
-
 // ─── SQLite Persistence ───
+
 async function loadScenarios(): Promise<SavedScenario[]> {
   try {
     const rows =
@@ -229,6 +54,7 @@ async function loadScenarios(): Promise<SavedScenario[]> {
     return [];
   }
 }
+
 async function saveScenarioToDB(
   name: string,
   steps: ScenarioStep[],
@@ -238,6 +64,7 @@ async function saveScenarioToDB(
     stepsJson: JSON.stringify(steps),
   });
 }
+
 async function updateScenarioInDB(
   id: number,
   name: string,
@@ -249,33 +76,19 @@ async function updateScenarioInDB(
     stepsJson: JSON.stringify(steps),
   });
 }
+
 async function deleteScenarioFromDB(id: number): Promise<void> {
   await invoke("delete_scenario", { id });
 }
 
+// ─── Main Component ───
+
 export function Scenarios() {
   const scenariosView = useAppStore((s) => s.scenariosView);
   const scenariosDirty = useAppStore((s) => s.scenariosDirty);
+
   const [steps, setSteps] = useState<ScenarioStep[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
-  const [_runLog, setRunLog] = useState<string[]>([]);
-
-  interface StepResult {
-    stepName: string;
-    method: string;
-    url: string;
-    status: "running" | "passed" | "failed" | "skipped";
-    successRate?: number;
-    rps?: number;
-    p95?: number;
-    totalReqs?: number;
-    error?: string;
-  }
-  const [runResults, setRunResults] = useState<StepResult[]>([]);
-  const [scenarioStatus, setScenarioStatus] = useState<
-    "idle" | "running" | "passed" | "failed"
-  >("idle");
   const [scenarioName, setScenarioName] = useState("Untitled Scenario");
   const [currentScenarioId, setCurrentScenarioId] = useState<number | null>(
     null,
@@ -283,22 +96,31 @@ export function Scenarios() {
   const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>([]);
   const [curlInput, setCurlInput] = useState<string | null>(null);
 
-  /** Per-step full TestResult for detail panel */
-  const [stepResults, setStepResults] = useState<Record<string, TestResult>>(
-    {},
-  );
-  const [selectedResultStepId, setSelectedResultStepId] = useState<
-    string | null
-  >(null);
+  const {
+    isRunning,
+    scenarioStatus,
+    runResults,
+    stepResults,
+    selectedResultStepId,
+    setSelectedResultStepId,
+    clearResults,
+    runScenario,
+  } = useScenarioRunner();
 
   const markDirty = () => useAppStore.getState().setScenariosDirty(true);
+  const enterEditor = () => useAppStore.getState().setScenariosView("editor");
+  const backToList = () => useAppStore.getState().setScenariosView("list");
 
   useEffect(() => {
     loadScenarios().then(setSavedScenarios);
   }, []);
 
-  const enterEditor = () => useAppStore.getState().setScenariosView("editor");
-  const backToList = () => useAppStore.getState().setScenariosView("list");
+  // ─── Step Operations ───
+
+  const updateStep = (id: string, patch: Partial<ScenarioStep>) => {
+    setSteps((s) => s.map((st) => (st.id === id ? { ...st, ...patch } : st)));
+    markDirty();
+  };
 
   const addStep = () => {
     const step = createStep(`Step ${steps.length + 1}`);
@@ -316,19 +138,14 @@ export function Scenarios() {
     markDirty();
   };
 
-  const updateStep = (id: string, patch: Partial<ScenarioStep>) => {
-    setSteps((s) => s.map((st) => (st.id === id ? { ...st, ...patch } : st)));
-    markDirty();
-  };
-
   const duplicateStep = (id: string) => {
     const original = steps.find((s) => s.id === id);
     if (!original) return;
-    const copy = {
+    const copy: ScenarioStep = {
       ...original,
       id: crypto.randomUUID(),
       name: `${original.name} (copy)`,
-      status: "pending" as const,
+      status: "pending",
       summary: undefined,
     };
     setSteps((s) => {
@@ -346,11 +163,11 @@ export function Scenarios() {
     const step: ScenarioStep = {
       ...createStep(`Step ${steps.length + 1}`),
       url: config.url,
-      method: config.method,
+      method: config.method as HttpMethod,
       headers,
       body: config.body,
       virtual_users: config.virtual_users,
-      mode: config.mode,
+      mode: config.mode as TestMode,
       timeout_ms: config.timeout_ms,
     };
     setSteps((s) => [...s, step]);
@@ -359,22 +176,7 @@ export function Scenarios() {
     enterEditor();
   };
 
-  /** Import from cURL command into a step */
-  const importCurlToStep = async (stepId: string, curl: string) => {
-    try {
-      const parsed = await parseCurl(curl);
-      updateStep(stepId, {
-        url: parsed.url,
-        method: parsed.method as HttpMethod,
-        headers: parsed.headers || {},
-        body: parsed.body || null,
-      });
-      setCurlInput(null);
-      showToast("cURL imported successfully");
-    } catch (err) {
-      showToast(`Invalid cURL: ${err}`);
-    }
-  };
+  // ─── Scenario Persistence ───
 
   const handleSave = async () => {
     try {
@@ -428,143 +230,22 @@ export function Scenarios() {
     }
   };
 
-  const runScenario = useCallback(async () => {
-    if (steps.length === 0) return;
-    setIsRunning(true);
-    setScenarioStatus("running");
-    setRunLog([]);
-    setStepResults({});
-    setSelectedResultStepId(null);
-    setRunResults(
-      steps.map((s) => ({
-        stepName: s.name,
-        method: s.method,
-        url: s.url,
-        status: "running" as const,
-      })),
-    );
-    setSteps((s) =>
-      s.map((st) => ({
-        ...st,
-        status: "pending" as const,
-        summary: undefined,
-      })),
-    );
-
-    let allPassed = true;
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
-      setSteps((s) =>
-        s.map((st) => (st.id === step.id ? { ...st, status: "running" } : st)),
-      );
-      setRunResults((prev) =>
-        prev.map((r, idx) =>
-          idx === i ? { ...r, status: "running" as const } : r,
-        ),
-      );
-
-      if (!step.url.trim()) {
-        setSteps((s) =>
-          s.map((st) =>
-            st.id === step.id
-              ? { ...st, status: "skipped", summary: "No URL" }
-              : st,
-          ),
-        );
-        setRunResults((prev) =>
-          prev.map((r, idx) =>
-            idx === i ? { ...r, status: "skipped" as const } : r,
-          ),
-        );
-        continue;
-      }
-
-      try {
-        const result = await runLoadTest(
-          {
-            url: step.url,
-            method: step.method,
-            headers: step.headers,
-            body: step.body?.trim() || null,
-            virtual_users: step.virtual_users,
-            mode: step.mode,
-            timeout_ms: step.timeout_ms,
-            think_time_ms: step.think_time_ms,
-            duration_secs: step.duration_secs,
-            iterations: step.iterations,
-          },
-          () => {},
-        );
-
-        const successRate =
-          result.total_requests > 0
-            ? (result.success_count / result.total_requests) * 100
-            : 0;
-        const passed = successRate >= 95;
-        if (!passed) allPassed = false;
-
-        setSteps((s) =>
-          s.map((st) =>
-            st.id === step.id
-              ? {
-                  ...st,
-                  status: passed ? "passed" : "failed",
-                  summary: `${successRate.toFixed(0)}% · ${result.requests_per_second.toFixed(0)} RPS · P95: ${result.latency_p95_ms.toFixed(0)}ms`,
-                }
-              : st,
-          ),
-        );
-        setRunResults((prev) =>
-          prev.map((r, idx) =>
-            idx === i
-              ? {
-                  ...r,
-                  status: passed
-                    ? "passed"
-                    : ("failed" as StepResult["status"]),
-                  successRate,
-                  rps: result.requests_per_second,
-                  p95: result.latency_p95_ms,
-                  totalReqs: result.total_requests,
-                }
-              : r,
-          ),
-        );
-        // Save full result for split panel
-        setStepResults((prev) => ({ ...prev, [step.id]: result }));
-        if (i === 0) setSelectedResultStepId(step.id);
-      } catch (err) {
-        allPassed = false;
-        setSteps((s) =>
-          s.map((st) =>
-            st.id === step.id
-              ? { ...st, status: "failed", summary: String(err) }
-              : st,
-          ),
-        );
-        setRunResults((prev) =>
-          prev.map((r, idx) =>
-            idx === i
-              ? {
-                  ...r,
-                  status: "failed" as const,
-                  error: String(err),
-                }
-              : r,
-          ),
-        );
-      }
-
-      if (step.think_time_ms > 0 && i < steps.length - 1) {
-        await new Promise((r) => setTimeout(r, step.think_time_ms));
-      }
+  const handleNewScenario = async () => {
+    if (useAppStore.getState().scenariosDirty) {
+      const ok = await confirmDialog("Discard current scenario?");
+      if (!ok) return;
     }
-    setScenarioStatus(allPassed ? "passed" : "failed");
-    setIsRunning(false);
-    showToast(allPassed ? "Scenario passed! ✅" : "Scenario has failures ⚠️");
-  }, [steps]);
+    setSteps([]);
+    setScenarioName("Untitled Scenario");
+    setCurrentScenarioId(null);
+    setExpandedId(null);
+    clearResults();
+    useAppStore.getState().setScenariosDirty(false);
+    showToast("New scenario created");
+  };
 
   // ─── LIST VIEW ───
+
   if (scenariosView === "list") {
     const currentConfig = useAppStore.getState().config;
     const hasConfig = currentConfig.url.trim().length > 0;
@@ -637,7 +318,7 @@ export function Scenarios() {
                     onClick={(e) => handleDeleteScenario(s.id, e)}
                     className="text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
                   >
-                    <IconX />
+                    ✕
                   </span>
                 </button>
               ))}
@@ -648,7 +329,10 @@ export function Scenarios() {
     );
   }
 
-  // ─── Main UI ───
+  // ─── EDITOR VIEW ───
+
+  const hasResults = Object.keys(stepResults).length > 0;
+
   return (
     <div className="flex flex-col h-full gap-3 overflow-hidden">
       {/* Toolbar */}
@@ -709,29 +393,13 @@ export function Scenarios() {
             <IconSave /> Save
           </button>
           <button
-            onClick={async () => {
-              if (useAppStore.getState().scenariosDirty) {
-                const ok = await confirmDialog("Discard current scenario?");
-                if (!ok) return;
-              }
-              setSteps([]);
-              setScenarioName("Untitled Scenario");
-              setCurrentScenarioId(null);
-              setRunLog([]);
-              setExpandedId(null);
-              setStepResults({});
-              setSelectedResultStepId(null);
-              setRunResults([]);
-              setScenarioStatus("idle");
-              useAppStore.getState().setScenariosDirty(false);
-              showToast("New scenario created");
-            }}
+            onClick={handleNewScenario}
             className="text-[10px] px-2.5 py-1.5 rounded-lg bg-bg-700 text-gray-500 hover:text-white hover:bg-bg-600 transition-colors"
           >
             New
           </button>
           <button
-            onClick={runScenario}
+            onClick={() => runScenario(steps, updateStep)}
             disabled={isRunning || steps.length === 0}
             className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
               isRunning || steps.length === 0
@@ -741,14 +409,9 @@ export function Scenarios() {
           >
             {isRunning ? "Running..." : "▶ Run All"}
           </button>
-          {Object.keys(stepResults).length > 0 && (
+          {hasResults && (
             <button
-              onClick={() => {
-                setStepResults({});
-                setSelectedResultStepId(null);
-                setRunResults([]);
-                setScenarioStatus("idle");
-              }}
+              onClick={clearResults}
               className="text-[10px] px-2 py-1.5 rounded-lg text-gray-500 hover:text-white hover:bg-bg-600 transition-colors"
             >
               ✕ Results
@@ -757,349 +420,39 @@ export function Scenarios() {
         </div>
       </div>
 
-      {/* Content: split when results, full editor otherwise */}
+      {/* Content */}
       <div
-        className={`flex-1 overflow-hidden ${Object.keys(stepResults).length > 0 ? "flex gap-3" : "flex flex-col"}`}
+        className={`flex-1 overflow-hidden ${hasResults ? "flex gap-3" : "flex flex-col"}`}
       >
         {/* Steps list */}
         <div
-          className={`overflow-y-auto space-y-2 ${Object.keys(stepResults).length > 0 ? "w-1/2 shrink-0" : "flex-1"}`}
+          className={`overflow-y-auto space-y-2 ${hasResults ? "w-1/2 shrink-0" : "flex-1"}`}
         >
-          {steps.map((step, index) => {
-            const isExpanded = expandedId === step.id;
-            const statusBorder =
-              step.status === "running"
-                ? "border-primary/40"
-                : step.status === "passed"
-                  ? "border-success/40"
-                  : step.status === "failed"
-                    ? "border-red-500/40"
-                    : "border-bg-600";
-            const statusDot =
-              step.status === "running"
-                ? "bg-primary animate-pulse"
-                : step.status === "passed"
-                  ? "bg-success"
-                  : step.status === "failed"
-                    ? "bg-red-500"
-                    : step.status === "skipped"
-                      ? "bg-gray-600"
-                      : "bg-bg-500";
-
-            return (
-              <div
-                key={step.id}
-                className={`bg-bg-800 border ${statusBorder} rounded-xl overflow-hidden transition-all`}
-              >
-                {/* Step header */}
-                <div
-                  className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-bg-700/50 transition-colors group ${
-                    selectedResultStepId === step.id && stepResults[step.id]
-                      ? "bg-bg-700/30"
-                      : ""
-                  }`}
-                  onClick={() => {
-                    setExpandedId(isExpanded ? null : step.id);
-                    if (stepResults[step.id]) setSelectedResultStepId(step.id);
-                  }}
-                >
-                  <span
-                    className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusDot}`}
-                  />
-                  <span className="text-xs text-gray-600 font-mono w-5 shrink-0">
-                    {index + 1}.
-                  </span>
-                  <span
-                    className={`text-xs font-mono font-bold shrink-0 ${METHOD_COLORS[step.method] || "text-gray-400"}`}
-                  >
-                    {step.method}
-                  </span>
-                  <span className="text-xs text-gray-400 truncate flex-1 font-mono">
-                    {step.url || "(no URL)"}
-                  </span>
-                  {step.summary && (
-                    <span className="text-[10px] text-gray-500 font-mono shrink-0">
-                      {step.summary}
-                    </span>
-                  )}
-                  <div className="flex items-center gap-0.5 shrink-0">
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (index > 0)
-                          setSteps(moveItem(steps, index, index - 1));
-                      }}
-                      className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Move up"
-                    >
-                      <IconUp />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (index < steps.length - 1)
-                          setSteps(moveItem(steps, index, index + 1));
-                      }}
-                      className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
-                      title="Move down"
-                    >
-                      <IconDown />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        duplicateStep(step.id);
-                      }}
-                      className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors"
-                      title="Duplicate"
-                    >
-                      <IconCopy />
-                    </button>
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        removeStep(step.id);
-                      }}
-                      className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                      title="Delete"
-                    >
-                      <IconX />
-                    </button>
-                    <span className="text-gray-600 ml-1">
-                      <IconChevron open={isExpanded} />
-                    </span>
-                  </div>
-                </div>
-
-                {/* Expanded editor */}
-                {isExpanded && (
-                  <div className="border-t border-bg-600 px-4 py-3 space-y-3 slide-in">
-                    {/* Name + cURL import */}
-                    <div className="flex gap-2">
-                      <input
-                        className="flex-1 bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:border-primary/50 outline-none"
-                        placeholder="Step name"
-                        value={step.name}
-                        onChange={(e) =>
-                          updateStep(step.id, { name: e.target.value })
-                        }
-                      />
-                      <button
-                        onClick={() =>
-                          setCurlInput(curlInput === step.id ? null : step.id)
-                        }
-                        className={`text-[10px] px-2 py-1 rounded flex items-center gap-1 transition-colors ${
-                          curlInput === step.id
-                            ? "bg-primary/20 text-primary"
-                            : "bg-bg-700 text-gray-500 hover:text-white hover:bg-bg-600"
-                        }`}
-                        title="Import from cURL"
-                      >
-                        <IconTerminal /> cURL
-                      </button>
-                    </div>
-
-                    {/* cURL input */}
-                    {curlInput === step.id && (
-                      <div className="space-y-2 slide-in">
-                        <textarea
-                          className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-2 text-xs font-mono text-gray-200 outline-none focus:border-primary/50 resize-none"
-                          rows={3}
-                          placeholder="curl -X POST https://api.example.com -H 'Content-Type: application/json' -d '{...}'"
-                          id={`curl-${step.id}`}
-                        />
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => {
-                              const el = document.getElementById(
-                                `curl-${step.id}`,
-                              ) as HTMLTextAreaElement;
-                              if (el?.value)
-                                importCurlToStep(step.id, el.value);
-                            }}
-                            className="text-[10px] px-3 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
-                          >
-                            Parse & Apply
-                          </button>
-                          <button
-                            onClick={() => setCurlInput(null)}
-                            className="text-[10px] px-2 py-1 rounded text-gray-600 hover:text-gray-400 transition-colors"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Method + URL */}
-                    <div className="flex gap-2">
-                      <select
-                        className="w-24 bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs font-mono text-gray-200"
-                        value={step.method}
-                        onChange={(e) =>
-                          updateStep(step.id, {
-                            method: e.target.value as HttpMethod,
-                          })
-                        }
-                      >
-                        {METHODS.map((m) => (
-                          <option key={m} value={m}>
-                            {m}
-                          </option>
-                        ))}
-                      </select>
-                      <input
-                        className="flex-1 bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-200 focus:border-primary/50 outline-none"
-                        placeholder="https://api.example.com/endpoint"
-                        value={step.url}
-                        onChange={(e) =>
-                          updateStep(step.id, { url: e.target.value })
-                        }
-                      />
-                    </div>
-
-                    {/* Headers */}
-                    <div>
-                      <label className="text-[10px] text-gray-600 mb-1 block">
-                        Headers
-                      </label>
-                      {Object.entries(step.headers).map(([key, val], hi) => (
-                        <div key={hi} className="flex gap-1 mb-1">
-                          <input
-                            className="flex-1 bg-bg-700 border border-bg-500 rounded px-2 py-1 text-[11px] font-mono text-gray-300 outline-none focus:border-primary/50"
-                            value={key}
-                            placeholder="Key"
-                            onChange={(e) => {
-                              const newHeaders = { ...step.headers };
-                              delete newHeaders[key];
-                              newHeaders[e.target.value] = val;
-                              updateStep(step.id, { headers: newHeaders });
-                            }}
-                          />
-                          <input
-                            className="flex-1 bg-bg-700 border border-bg-500 rounded px-2 py-1 text-[11px] font-mono text-gray-300 outline-none focus:border-primary/50"
-                            value={val}
-                            placeholder="Value"
-                            onChange={(e) => {
-                              updateStep(step.id, {
-                                headers: {
-                                  ...step.headers,
-                                  [key]: e.target.value,
-                                },
-                              });
-                            }}
-                          />
-                          <button
-                            onClick={() => {
-                              const newHeaders = { ...step.headers };
-                              delete newHeaders[key];
-                              updateStep(step.id, { headers: newHeaders });
-                            }}
-                            className="text-gray-600 hover:text-red-400 w-5 flex items-center justify-center"
-                          >
-                            <IconX />
-                          </button>
-                        </div>
-                      ))}
-                      <button
-                        onClick={() =>
-                          updateStep(step.id, {
-                            headers: { ...step.headers, "": "" },
-                          })
-                        }
-                        className="text-[10px] text-gray-600 hover:text-primary transition-colors flex items-center gap-1 mt-1"
-                      >
-                        <IconPlus /> Add Header
-                      </button>
-                    </div>
-
-                    {/* VUs + Mode + Delay */}
-                    <div className="flex gap-2">
-                      <div className="flex-1">
-                        <label className="text-[10px] text-gray-600 mb-1 block">
-                          Requests / VUs
-                        </label>
-                        <input
-                          type="number"
-                          className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-200 outline-none focus:border-primary/50"
-                          value={step.virtual_users}
-                          min={1}
-                          onChange={(e) =>
-                            updateStep(step.id, {
-                              virtual_users: parseInt(e.target.value) || 1,
-                            })
-                          }
-                        />
-                      </div>
-                      <div className="flex-1">
-                        <label className="text-[10px] text-gray-600 mb-1 block">
-                          Mode
-                        </label>
-                        <select
-                          className="w-full bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs text-gray-200"
-                          value={step.mode}
-                          onChange={(e) =>
-                            updateStep(step.id, {
-                              mode: e.target.value as TestMode,
-                            })
-                          }
-                        >
-                          <option value="burst">Burst</option>
-                          <option value="constant">Constant</option>
-                          <option value="ramp_up">Ramp Up</option>
-                          <option value="stress_test">Stress Test</option>
-                        </select>
-                      </div>
-                      <div className="flex-1">
-                        <label className="text-[10px] text-gray-600 mb-1 block">
-                          Delay After (ms)
-                        </label>
-                        <input
-                          type="number"
-                          className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-200 outline-none focus:border-primary/50"
-                          value={step.think_time_ms}
-                          min={0}
-                          step={100}
-                          placeholder="0"
-                          onChange={(e) =>
-                            updateStep(step.id, {
-                              think_time_ms: parseInt(e.target.value) || 0,
-                            })
-                          }
-                        />
-                      </div>
-                    </div>
-
-                    {/* Body */}
-                    {(step.method === "POST" ||
-                      step.method === "PUT" ||
-                      step.method === "PATCH") && (
-                      <div>
-                        <label className="text-[10px] text-gray-600 mb-1 block">
-                          Request Body (JSON)
-                        </label>
-                        <textarea
-                          className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-2 text-xs font-mono text-gray-200 outline-none focus:border-primary/50 resize-none"
-                          rows={3}
-                          placeholder='{"key": "value"}'
-                          value={step.body || ""}
-                          onChange={(e) =>
-                            updateStep(step.id, {
-                              body: e.target.value || null,
-                            })
-                          }
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+          {steps.map((step, index) => (
+            <ScenarioStepCard
+              key={step.id}
+              step={step}
+              index={index}
+              steps={steps}
+              isExpanded={expandedId === step.id}
+              isSelectedForResult={selectedResultStepId === step.id}
+              hasResult={!!stepResults[step.id]}
+              curlInput={curlInput}
+              onToggle={() =>
+                setExpandedId(expandedId === step.id ? null : step.id)
+              }
+              onSelectForResult={() => setSelectedResultStepId(step.id)}
+              onUpdate={updateStep}
+              onRemove={removeStep}
+              onDuplicate={duplicateStep}
+              onReorder={setSteps}
+              onCurlInput={setCurlInput}
+            />
+          ))}
         </div>
 
         {/* Summary bar (only when no split panel) */}
-        {scenarioStatus !== "idle" && Object.keys(stepResults).length === 0 && (
+        {scenarioStatus !== "idle" && !hasResults && (
           <div
             className={`shrink-0 px-4 py-2 rounded-xl flex items-center justify-between ${
               scenarioStatus === "passed"
@@ -1140,10 +493,7 @@ export function Scenarios() {
               </span>
             </div>
             <button
-              onClick={() => {
-                setRunResults([]);
-                setScenarioStatus("idle");
-              }}
+              onClick={clearResults}
               className="text-[10px] text-gray-600 hover:text-gray-400"
             >
               ✕
@@ -1152,7 +502,7 @@ export function Scenarios() {
         )}
 
         {/* Right: ResultsDashboard (split mode) */}
-        {Object.keys(stepResults).length > 0 && (
+        {hasResults && (
           <div className="flex-1 overflow-y-auto rounded-xl border border-bg-600 bg-bg-800">
             {selectedResultStepId && stepResults[selectedResultStepId] ? (
               <div className="p-4">
@@ -1183,7 +533,6 @@ export function Scenarios() {
           </div>
         )}
       </div>
-      {/* close content wrapper */}
     </div>
   );
 }
