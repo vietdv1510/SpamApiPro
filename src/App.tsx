@@ -106,6 +106,7 @@ function App() {
     }
     setActiveSection(id);
     if (id === "test") setActiveTab("test");
+    if (id === "scenarios") useAppStore.getState().setScenariosView("list");
   };
 
   // ─── Resizable left panel ───

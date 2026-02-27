@@ -80,21 +80,6 @@ function IconSave() {
     </svg>
   );
 }
-function IconFolder() {
-  return (
-    <svg
-      className="w-3.5 h-3.5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-    </svg>
-  );
-}
 function IconImport() {
   return (
     <svg
@@ -263,6 +248,8 @@ async function deleteScenarioFromDB(id: number): Promise<void> {
 }
 
 export function Scenarios() {
+  const scenariosView = useAppStore((s) => s.scenariosView);
+  const scenariosDirty = useAppStore((s) => s.scenariosDirty);
   const [steps, setSteps] = useState<ScenarioStep[]>([]);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -272,7 +259,6 @@ export function Scenarios() {
     null,
   );
   const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>([]);
-  const [showSaved, setShowSaved] = useState(false);
   const [curlInput, setCurlInput] = useState<string | null>(null);
 
   const markDirty = () => useAppStore.getState().setScenariosDirty(true);
@@ -281,11 +267,15 @@ export function Scenarios() {
     loadScenarios().then(setSavedScenarios);
   }, []);
 
+  const enterEditor = () => useAppStore.getState().setScenariosView("editor");
+  const backToList = () => useAppStore.getState().setScenariosView("list");
+
   const addStep = () => {
     const step = createStep(`Step ${steps.length + 1}`);
     setSteps((s) => [...s, step]);
     setExpandedId(step.id);
     markDirty();
+    enterEditor();
   };
 
   const removeStep = async (id: string) => {
@@ -336,6 +326,7 @@ export function Scenarios() {
     setSteps((s) => [...s, step]);
     setExpandedId(step.id);
     markDirty();
+    enterEditor();
   };
 
   /** Import from cURL command into a step */
@@ -387,8 +378,8 @@ export function Scenarios() {
     );
     setScenarioName(s.name);
     setCurrentScenarioId(s.id);
-    setShowSaved(false);
     useAppStore.getState().setScenariosDirty(false);
+    enterEditor();
     showToast(`Loaded "${s.name}"`);
   };
 
@@ -498,8 +489,8 @@ export function Scenarios() {
     setIsRunning(false);
   }, [steps]);
 
-  // ─── Empty state ───
-  if (steps.length === 0) {
+  // ─── LIST VIEW ───
+  if (scenariosView === "list") {
     const currentConfig = useAppStore.getState().config;
     const hasConfig = currentConfig.url.trim().length > 0;
 
@@ -588,6 +579,33 @@ export function Scenarios() {
       {/* Toolbar */}
       <div className="flex items-center justify-between shrink-0 gap-2">
         <div className="flex items-center gap-3 flex-1 min-w-0">
+          <button
+            onClick={async () => {
+              if (scenariosDirty) {
+                const ok = await confirmDialog(
+                  "You have unsaved changes. Go back to list?",
+                );
+                if (!ok) return;
+                useAppStore.getState().setScenariosDirty(false);
+              }
+              backToList();
+            }}
+            className="text-[10px] px-2 py-1 rounded text-gray-500 hover:text-white hover:bg-bg-600 transition-colors flex items-center gap-1"
+            title="Back to scenario list"
+          >
+            <svg
+              className="w-3 h-3"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <polyline points="15 18 9 12 15 6" />
+            </svg>
+            List
+          </button>
           <input
             className="bg-transparent text-sm text-gray-300 font-medium border-b border-transparent hover:border-bg-500 focus:border-primary/50 outline-none px-1 py-0.5 w-44"
             value={scenarioName}
@@ -598,7 +616,7 @@ export function Scenarios() {
             placeholder="Scenario name"
           />
           <span className="text-[10px] text-gray-600 shrink-0">
-            {steps.length} step{steps.length > 1 ? "s" : ""}
+            {steps.length} step{steps.length !== 1 ? "s" : ""}
           </span>
           <button
             onClick={addStep}
@@ -615,34 +633,9 @@ export function Scenarios() {
           >
             <IconSave /> Save
           </button>
-          {savedScenarios.length > 0 && (
-            <div className="relative">
-              <button
-                onClick={() => setShowSaved(!showSaved)}
-                className="text-[10px] px-2.5 py-1.5 rounded-lg bg-bg-700 text-gray-400 hover:text-white hover:bg-bg-600 transition-colors flex items-center gap-1.5"
-                title="Load saved scenario"
-              >
-                <IconFolder /> Load
-              </button>
-              {showSaved && (
-                <div className="absolute right-0 top-8 w-56 bg-bg-800 border border-bg-600 rounded-xl shadow-xl z-50 p-2 space-y-1 slide-in">
-                  {savedScenarios.map((s) => (
-                    <button
-                      key={s.id}
-                      onClick={() => handleLoadScenario(s)}
-                      className="w-full text-left px-3 py-2 rounded-lg hover:bg-bg-700 transition-colors text-xs flex justify-between items-center group"
-                    >
-                      <span className="text-gray-300">{s.name}</span>
-                      <span className="text-gray-600">{s.steps.length}s</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
           <button
             onClick={async () => {
-              if (steps.length > 0 && useAppStore.getState().scenariosDirty) {
+              if (useAppStore.getState().scenariosDirty) {
                 const ok = await confirmDialog("Discard current scenario?");
                 if (!ok) return;
               }
@@ -660,9 +653,9 @@ export function Scenarios() {
           </button>
           <button
             onClick={runScenario}
-            disabled={isRunning}
+            disabled={isRunning || steps.length === 0}
             className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all ${
-              isRunning
+              isRunning || steps.length === 0
                 ? "bg-gray-700 text-gray-500 cursor-not-allowed"
                 : "bg-gradient-to-r from-primary to-secondary text-bg-900 hover:scale-105"
             }`}
