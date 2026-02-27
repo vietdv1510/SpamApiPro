@@ -7,12 +7,30 @@ import { History } from "./components/History";
 import { Scenarios } from "./components/Scenarios";
 import { useAppStore } from "./store";
 
-const TABS = [
-  { id: "test", label: "Test" },
-  { id: "results", label: "Results" },
-  { id: "history", label: "History" },
-  { id: "scenarios", label: "Scenarios" },
-] as const;
+/** Sidebar sections — icon nav bên trái */
+type SidebarSection = "test" | "scenarios" | "history";
+
+const SIDEBAR_ITEMS: {
+  id: SidebarSection;
+  icon: string;
+  label: string;
+  tooltip: string;
+}[] = [
+  { id: "test", icon: "⚡", label: "Test", tooltip: "Load Test" },
+  {
+    id: "scenarios",
+    icon: "🔗",
+    label: "Flows",
+    tooltip: "Multi-Step Scenarios",
+  },
+  { id: "history", icon: "📋", label: "History", tooltip: "Test History" },
+];
+
+/** Sub-tabs for the Test section */
+const TEST_TABS = [
+  { id: "test" as const, label: "Live" },
+  { id: "results" as const, label: "Results" },
+];
 
 const MIN_PANEL_WIDTH = 280;
 const MAX_PANEL_WIDTH = 600;
@@ -21,6 +39,8 @@ const DEFAULT_PANEL_WIDTH = 340;
 function App() {
   const { activeTab, setActiveTab, runStatus, currentResult, history } =
     useAppStore();
+
+  const [activeSection, setActiveSection] = useState<SidebarSection>("test");
 
   // ─── Resizable left panel ───
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
@@ -63,17 +83,15 @@ function App() {
 
   return (
     <div className="flex flex-col h-screen bg-bg-900 text-gray-100 select-none">
-      {/* Header bar — onMouseDown startDragging() is the reliable Tauri v2 drag API */}
+      {/* Header bar */}
       <div
         className="h-10 w-full shrink-0 bg-bg-900 border-b border-bg-700 flex items-center justify-end px-5 cursor-default"
         onMouseDown={(e) => {
-          // Only drag on left-click on empty area (not on badges)
           if (e.target === e.currentTarget && e.button === 0) {
             getCurrentWindow().startDragging();
           }
         }}
         onDoubleClick={(e) => {
-          // Double-click empty area to toggle maximize
           if (e.target === e.currentTarget) {
             const win = getCurrentWindow();
             win.isMaximized().then((maximized) => {
@@ -112,70 +130,125 @@ function App() {
         </div>
       </div>
 
-      {/* Main Layout: Resizable Left Panel + Right Panel */}
+      {/* Main Layout: Sidebar + Content */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: Test Config (resizable) */}
-        <div
-          className="flex-shrink-0 border-r border-bg-700 flex flex-col overflow-hidden"
-          style={{ width: `${panelWidth}px`, minWidth: `${MIN_PANEL_WIDTH}px` }}
-        >
-          <div className="px-4 py-3 border-b border-bg-700 flex items-center justify-between">
-            <h2 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
-              Configure
-            </h2>
-            <span className="text-[10px] text-gray-700 font-mono">
-              {panelWidth}px
-            </span>
-          </div>
-          <div className="flex-1 overflow-hidden p-3">
-            <TestConfig />
-          </div>
+        {/* ─── Vertical Sidebar ─── */}
+        <div className="w-14 shrink-0 bg-bg-900 border-r border-bg-700 flex flex-col items-center py-2 gap-1">
+          {SIDEBAR_ITEMS.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => {
+                setActiveSection(item.id);
+                if (item.id === "test") setActiveTab("test");
+              }}
+              title={item.tooltip}
+              className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all ${
+                activeSection === item.id
+                  ? "bg-primary/10 text-primary border border-primary/30"
+                  : "text-gray-600 hover:text-gray-400 hover:bg-bg-700 border border-transparent"
+              }`}
+            >
+              <span className="text-sm leading-none">{item.icon}</span>
+              <span className="text-[8px] font-medium leading-none">
+                {item.label}
+              </span>
+            </button>
+          ))}
         </div>
 
-        {/* Resize Handle */}
-        <div
-          className="resize-handle"
-          onMouseDown={handleMouseDown}
-          title="Drag to resize"
-        >
-          <div className="resize-handle-dots">
-            <span />
-            <span />
-            <span />
-          </div>
-        </div>
+        {/* ─── Section: Test (Config + Live/Results) ─── */}
+        {activeSection === "test" && (
+          <>
+            {/* Left: Test Config (resizable) */}
+            <div
+              className="flex-shrink-0 border-r border-bg-700 flex flex-col overflow-hidden"
+              style={{
+                width: `${panelWidth}px`,
+                minWidth: `${MIN_PANEL_WIDTH}px`,
+              }}
+            >
+              <div className="px-4 py-3 border-b border-bg-700 flex items-center justify-between">
+                <h2 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
+                  Configure
+                </h2>
+                <span className="text-[10px] text-gray-700 font-mono">
+                  {panelWidth}px
+                </span>
+              </div>
+              <div className="flex-1 overflow-hidden p-3">
+                <TestConfig />
+              </div>
+            </div>
 
-        {/* Right: Tabbed area */}
-        <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Tabs — minimal clean design */}
-          <div className="flex border-b border-bg-700 px-2">
-            {TABS.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`relative px-4 py-3 text-xs font-semibold tracking-wide uppercase transition-all ${
-                  activeTab === tab.id
-                    ? "text-primary tab-active"
-                    : "text-gray-600 hover:text-gray-400"
-                }`}
-              >
-                {tab.label}
-                {tab.id === "results" &&
-                currentResult?.race_conditions_detected ? (
-                  <span className="absolute top-2.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full" />
-                ) : null}
-              </button>
-            ))}
-          </div>
+            {/* Resize Handle */}
+            <div
+              className="resize-handle"
+              onMouseDown={handleMouseDown}
+              title="Drag to resize"
+            >
+              <div className="resize-handle-dots">
+                <span />
+                <span />
+                <span />
+              </div>
+            </div>
 
-          {/* Tab Content */}
-          <div className="flex-1 overflow-hidden p-4">
-            {activeTab === "test" && <LiveMonitor />}
-            {activeTab === "results" && <ResultsDashboard />}
-            {activeTab === "history" && <History />}
-            {activeTab === "scenarios" && <Scenarios />}
+            {/* Right: Live/Results sub-tabs */}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <div className="flex border-b border-bg-700 px-2">
+                {TEST_TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`relative px-4 py-3 text-xs font-semibold tracking-wide uppercase transition-all ${
+                      activeTab === tab.id
+                        ? "text-primary tab-active"
+                        : "text-gray-600 hover:text-gray-400"
+                    }`}
+                  >
+                    {tab.label}
+                    {tab.id === "results" &&
+                    currentResult?.race_conditions_detected ? (
+                      <span className="absolute top-2.5 right-0.5 w-1.5 h-1.5 bg-red-500 rounded-full" />
+                    ) : null}
+                  </button>
+                ))}
+              </div>
+              <div className="flex-1 overflow-hidden p-4">
+                {activeTab === "test" && <LiveMonitor />}
+                {activeTab === "results" && <ResultsDashboard />}
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* ─── Section: Scenarios ─── */}
+        {activeSection === "scenarios" && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="px-4 py-3 border-b border-bg-700">
+              <h2 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
+                Multi-Step Scenarios
+              </h2>
+            </div>
+            <div className="flex-1 overflow-hidden p-4">
+              <Scenarios />
+            </div>
           </div>
-        </div>
+        )}
+
+        {/* ─── Section: History ─── */}
+        {activeSection === "history" && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="px-4 py-3 border-b border-bg-700">
+              <h2 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
+                Test History
+              </h2>
+            </div>
+            <div className="flex-1 overflow-hidden p-4">
+              <History />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Status Bar */}

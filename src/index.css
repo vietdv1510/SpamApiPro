@@ -199,6 +199,23 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
+/* ─── Custom Select — flat dark theme ─── */
+select {
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%236B7280' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 10px;
+  padding-right: 28px !important;
+  cursor: pointer;
+}
+select:focus {
+  outline: none;
+  border-color: rgba(0, 212, 255, 0.5);
+}
+
 /* ─── Glow Effects ─── */
 .glow-primary {
   box-shadow: 0 0 20px rgba(0, 212, 255, 0.2);

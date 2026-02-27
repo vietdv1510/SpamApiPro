@@ -212,8 +212,11 @@ export function Scenarios() {
 
   // ─── Empty state ───
   if (steps.length === 0) {
+    const currentConfig = useAppStore.getState().config;
+    const hasConfig = currentConfig.url.trim().length > 0;
+
     return (
-      <div className="flex flex-col items-center justify-center h-full gap-4 text-center">
+      <div className="flex flex-col items-center justify-center h-full gap-5 text-center">
         <div className="text-6xl opacity-20">🔗</div>
         <div>
           <p className="text-gray-400 text-sm font-medium">
@@ -224,19 +227,27 @@ export function Scenarios() {
             previous one completes.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-3 w-64">
           <button
             onClick={addStep}
-            className="px-4 py-2 rounded-lg text-xs font-medium bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors"
+            className="px-4 py-2.5 rounded-lg text-xs font-medium bg-bg-700 text-gray-400 border border-bg-500 hover:bg-bg-600 hover:text-gray-200 transition-colors"
           >
-            + New Step
+            + Add Blank Step
           </button>
-          <button
-            onClick={importFromConfig}
-            className="px-4 py-2 rounded-lg text-xs font-medium bg-bg-700 text-gray-400 border border-bg-500 hover:bg-bg-600 transition-colors"
-          >
-            📋 Import Current Config
-          </button>
+          {hasConfig && (
+            <button
+              onClick={importFromConfig}
+              className="px-4 py-2.5 rounded-lg text-xs font-medium bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors text-left"
+            >
+              <div className="flex items-center gap-2 mb-1">
+                <span>📥</span>
+                <span className="font-bold">Import from Test Config</span>
+              </div>
+              <div className="text-[10px] text-primary/60 font-mono truncate pl-5">
+                {currentConfig.method} {currentConfig.url}
+              </div>
+            </button>
+          )}
         </div>
       </div>
     );
@@ -255,13 +266,14 @@ export function Scenarios() {
             onClick={addStep}
             className="text-[10px] px-2 py-1 rounded bg-bg-700 text-gray-400 hover:text-primary hover:bg-primary/10 transition-colors"
           >
-            + Add
+            + Blank
           </button>
           <button
             onClick={importFromConfig}
-            className="text-[10px] px-2 py-1 rounded bg-bg-700 text-gray-400 hover:text-gray-200 hover:bg-bg-600 transition-colors"
+            className="text-[10px] px-2 py-1 rounded bg-primary/10 text-primary/70 hover:text-primary hover:bg-primary/20 transition-colors font-medium"
+            title={`Import: ${useAppStore.getState().config.method} ${useAppStore.getState().config.url}`}
           >
-            📋 Import
+            📥 Import Config
           </button>
         </div>
         <button
