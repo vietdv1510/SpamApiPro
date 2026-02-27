@@ -3637,6 +3637,7 @@ dependencies = [
 name = "spam-api"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "hdrhistogram",
  "parking_lot",
  "reqwest 0.12.28",

@@ -30,12 +30,16 @@ pub async fn run_load_test(
 ) -> Result<TestResult, String> {
     eprintln!("🟢 [CMD] run_load_test called: {} VUs, mode={:?}, url={}", config.virtual_users, config.mode, config.url);
 
-    // ⚡ CRITICAL: Cancel bất kỳ test nào đang chạy trước đó
+    // ⚡ CRITICAL: Cancel bất kỳ test nào đang chạy trước đó + emit event cho Frontend
     {
         let old_token = state.cancel_token.lock().clone();
         if let Some(old_cancel) = old_token {
             eprintln!("🔄 [CMD] Cancelling previous run...");
             old_cancel.cancel();
+            // Emit event để Frontend biết test cũ bị huỷ (tránh ghost 'Running' state)
+            let _ = app.emit("test_force_cancelled", serde_json::json!({
+                "reason": "New test started"
+            }));
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }

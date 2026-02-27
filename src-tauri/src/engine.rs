@@ -104,7 +104,7 @@ impl LoadTestEngine {
         Ok(Self { client })
     }
 
-    /// Warm up connections — hỗ trợ cancel + hard timeout 15s
+    /// Warm up connections — hỗ trợ cancel + hard timeout 15s + semaphore giới hạn đồng thời
     async fn warm_up_connections(
         &self,
         url: &str,
@@ -114,13 +114,20 @@ impl LoadTestEngine {
         let start = Instant::now();
         let success = Arc::new(AtomicU32::new(0));
         let mut handles = Vec::with_capacity(count);
+        // ⚡ Fix: Giới hạn warmup đồng thời tối đa 200 connections thay vì tất cả cùng lúc
+        let warmup_semaphore = Arc::new(tokio::sync::Semaphore::new(200.min(count)));
 
         for _ in 0..count {
             let client = self.client.clone();
             let url = url.to_string();
             let success = Arc::clone(&success);
             let cancel = cancel.clone();
+            let sem = Arc::clone(&warmup_semaphore);
             handles.push(tokio::spawn(async move {
+                let _permit = match sem.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => return,
+                };
                 tokio::select! {
                     biased;
                     _ = cancel.cancelled() => {}
@@ -425,6 +432,8 @@ impl LoadTestEngine {
 
         let global_start = Instant::now();
         let config = Arc::new(config);
+        // ⚡ Fix 1.1: Pre-convert body thành Bytes (zero-copy clone)
+        let body_bytes: Option<bytes::Bytes> = config.body.as_ref().map(|b| bytes::Bytes::from(b.clone()));
         let mut handles = Vec::new();
         let mut request_id = 0;
 
@@ -444,6 +453,7 @@ impl LoadTestEngine {
             let callback = Arc::clone(&callback);
             let cancelled_count = Arc::clone(&cancelled_count);
             let cancel = cancel.clone();
+            let body_bytes = body_bytes.clone();
             let id = request_id;
             request_id += 1;
 
@@ -466,8 +476,8 @@ impl LoadTestEngine {
                 for (key, value) in &config.headers {
                     builder = builder.header(key, value);
                 }
-                if let Some(body) = &config.body {
-                    builder = builder.body(body.clone());
+                if let Some(b) = &body_bytes {
+                    builder = builder.body(b.clone());
                 }
 
                 let request = match builder.build() {
@@ -577,6 +587,8 @@ impl LoadTestEngine {
         let cancelled_count = Arc::new(AtomicU32::new(0));
         let global_start = Instant::now();
         let config = Arc::new(config);
+        // ⚡ Fix 1.1: Pre-convert body thành Bytes (zero-copy clone)
+        let body_bytes: Option<bytes::Bytes> = config.body.as_ref().map(|b| bytes::Bytes::from(b.clone()));
         let mut request_id = 0;
 
         for step in 0..steps {
@@ -604,6 +616,7 @@ impl LoadTestEngine {
                 let callback = Arc::clone(&callback);
                 let cancelled_count = Arc::clone(&cancelled_count);
                 let cancel = cancel.clone();
+                let body_bytes = body_bytes.clone();
                 let id = request_id;
                 request_id += 1;
 
@@ -624,7 +637,7 @@ impl LoadTestEngine {
                     for (k, v) in &config.headers {
                         builder = builder.header(k, v);
                     }
-                    if let Some(b) = &config.body {
+                    if let Some(b) = &body_bytes {
                         builder = builder.body(b.clone());
                     }
 
@@ -707,6 +720,8 @@ impl LoadTestEngine {
         let callback = Arc::new(progress_callback);
         let global_start = Instant::now();
         let config = Arc::new(config);
+        // ⚡ Fix 1.1: Pre-convert body thành Bytes (zero-copy clone)
+        let body_bytes: Option<bytes::Bytes> = config.body.as_ref().map(|b| bytes::Bytes::from(b.clone()));
         let mut request_id = 0;
 
         loop {
@@ -729,6 +744,7 @@ impl LoadTestEngine {
                 let client = self.client.clone();
                 let callback = Arc::clone(&callback);
                 let cancel = cancel.clone();
+                let body_bytes = body_bytes.clone();
                 let id = request_id; request_id += 1;
                 
                 handles.push(tokio::spawn(async move {
@@ -746,8 +762,8 @@ impl LoadTestEngine {
                     for (key, value) in &config.headers {
                         builder = builder.header(key, value);
                     }
-                    if let Some(body) = &config.body {
-                        builder = builder.body(body.clone());
+                    if let Some(b) = &body_bytes {
+                        builder = builder.body(b.clone());
                     }
                     let request = builder.build().unwrap();
 

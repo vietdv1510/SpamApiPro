@@ -30,6 +30,7 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 hdrhistogram = "7"
 parking_lot = "0.12"
 tokio-util = { version = "0.7", features = ["rt"] }
+bytes = "1.11.1"
 
 
 
