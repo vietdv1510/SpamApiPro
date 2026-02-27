@@ -110,6 +110,7 @@ export function useScenarioRunner(): UseScenarioRunnerReturn {
               mode: step.mode,
               timeout_ms: step.timeout_ms,
               think_time_ms: step.think_time_ms,
+              ignore_ssl_errors: step.ignore_ssl_errors,
               duration_secs: step.duration_secs,
               iterations: step.iterations,
             },

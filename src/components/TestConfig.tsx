@@ -174,6 +174,31 @@ export function TestConfig() {
               cURL
             </button>
           </div>
+
+          {/* SSL Toggle */}
+          <div className="flex items-center justify-between px-1 mt-1">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase font-bold tracking-wider text-gray-500">
+                SSL Verification
+              </span>
+              {config.ignore_ssl_errors && (
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-500 border border-amber-500/20">
+                  Insecure Mode
+                </span>
+              )}
+            </div>
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                className="sr-only peer"
+                checked={!config.ignore_ssl_errors}
+                onChange={(e) =>
+                  setConfig({ ignore_ssl_errors: !e.target.checked })
+                }
+              />
+              <div className="w-7 h-4 bg-bg-600 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-success"></div>
+            </label>
+          </div>
         </div>
 
         {/* cURL Import — fixed panel */}

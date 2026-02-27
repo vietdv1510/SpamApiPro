@@ -21,6 +21,8 @@ pub struct TestConfig {
     pub mode: TestMode,
     pub timeout_ms: u64,
     pub think_time_ms: u64,
+    #[serde(default)]
+    pub ignore_ssl_errors: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -86,7 +88,7 @@ pub struct LoadTestEngine {
 
 impl LoadTestEngine {
     /// Tạo engine mới — trả Result thay vì panic
-    pub fn new(timeout_ms: u64) -> Result<Self, String> {
+    pub fn new(timeout_ms: u64, ignore_ssl_errors: bool) -> Result<Self, String> {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_millis(timeout_ms))
             .connect_timeout(Duration::from_secs(10))
@@ -95,7 +97,7 @@ impl LoadTestEngine {
             .pool_idle_timeout(Duration::from_secs(90))
             .tcp_keepalive(Duration::from_secs(30))
             .tcp_nodelay(true)
-            .danger_accept_invalid_certs(true)
+            .danger_accept_invalid_certs(ignore_ssl_errors)
             .use_rustls_tls()
             .user_agent("SpamAPI-Pro/1.0 (Rust/Tokio)")
             .build()

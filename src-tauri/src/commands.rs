@@ -51,7 +51,7 @@ pub async fn run_load_test(
         *token_lock = Some(cancel.clone());
     }
 
-    let engine = LoadTestEngine::new(config.timeout_ms)?;
+    let engine = LoadTestEngine::new(config.timeout_ms, config.ignore_ssl_errors)?;
     let app_clone = app.clone();
     let cancel_clone = cancel.clone();
 
@@ -324,5 +324,6 @@ pub fn parse_curl(curl_command: String) -> Result<TestConfig, String> {
         mode: crate::engine::TestMode::Burst,
         timeout_ms: 10_000,
         think_time_ms: 0,
+        ignore_ssl_errors: true,
     })
 }
