@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect } from "react";
 import { useAppStore, type HttpMethod, type TestMode } from "../store";
-import { runLoadTest } from "../tauri";
+import { runLoadTest, parseCurl } from "../tauri";
 import { invoke } from "@tauri-apps/api/core";
 
 /** Một bước trong scenario */
@@ -17,13 +17,10 @@ interface ScenarioStep {
   think_time_ms: number;
   duration_secs: number | null;
   iterations: number | null;
-  /** Trạng thái chạy */
   status: "pending" | "running" | "passed" | "failed" | "skipped";
-  /** Kết quả tóm tắt */
   summary?: string;
 }
 
-/** Saved scenario in DB */
 interface SavedScenario {
   id: number;
   name: string;
@@ -64,6 +61,166 @@ const METHOD_COLORS: Record<string, string> = {
   PATCH: "text-purple-400",
 };
 
+// ─── SVG Icon Components ───
+function IconSave() {
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+      <polyline points="17 21 17 13 7 13 7 21" />
+      <polyline points="7 3 7 8 15 8" />
+    </svg>
+  );
+}
+function IconFolder() {
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  );
+}
+function IconImport() {
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <polyline points="7 10 12 15 17 10" />
+      <line x1="12" y1="15" x2="12" y2="3" />
+    </svg>
+  );
+}
+function IconTerminal() {
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  );
+}
+function IconPlus() {
+  return (
+    <svg
+      className="w-3 h-3"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="12" y1="5" x2="12" y2="19" />
+      <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+  );
+}
+function IconCopy() {
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </svg>
+  );
+}
+function IconX() {
+  return (
+    <svg
+      className="w-3.5 h-3.5"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="18" y1="6" x2="6" y2="18" />
+      <line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+function IconChevron({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`w-3.5 h-3.5 transition-transform ${open ? "rotate-180" : ""}`}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+function IconUp() {
+  return (
+    <svg
+      className="w-3 h-3"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="18 15 12 9 6 15" />
+    </svg>
+  );
+}
+function IconDown() {
+  return (
+    <svg
+      className="w-3 h-3"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <polyline points="6 9 12 15 18 9" />
+    </svg>
+  );
+}
+
 // ─── SQLite Persistence ───
 async function loadScenarios(): Promise<SavedScenario[]> {
   try {
@@ -80,7 +237,6 @@ async function loadScenarios(): Promise<SavedScenario[]> {
     return [];
   }
 }
-
 async function saveScenarioToDB(
   name: string,
   steps: ScenarioStep[],
@@ -90,7 +246,6 @@ async function saveScenarioToDB(
     stepsJson: JSON.stringify(steps),
   });
 }
-
 async function updateScenarioInDB(
   id: number,
   name: string,
@@ -102,7 +257,6 @@ async function updateScenarioInDB(
     stepsJson: JSON.stringify(steps),
   });
 }
-
 async function deleteScenarioFromDB(id: number): Promise<void> {
   await invoke("delete_scenario", { id });
 }
@@ -118,8 +272,10 @@ export function Scenarios() {
   );
   const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>([]);
   const [showSaved, setShowSaved] = useState(false);
+  const [curlInput, setCurlInput] = useState<string | null>(null); // null = hidden
 
-  // Load saved scenarios on mount
+  const markDirty = () => useAppStore.getState().setScenariosDirty(true);
+
   useEffect(() => {
     loadScenarios().then(setSavedScenarios);
   }, []);
@@ -128,15 +284,19 @@ export function Scenarios() {
     const step = createStep(`Step ${steps.length + 1}`);
     setSteps((s) => [...s, step]);
     setExpandedId(step.id);
+    markDirty();
   };
 
   const removeStep = (id: string) => {
+    if (!confirm("Delete this step?")) return;
     setSteps((s) => s.filter((st) => st.id !== id));
     if (expandedId === id) setExpandedId(null);
+    markDirty();
   };
 
   const updateStep = (id: string, patch: Partial<ScenarioStep>) => {
     setSteps((s) => s.map((st) => (st.id === id ? { ...st, ...patch } : st)));
+    markDirty();
   };
 
   const duplicateStep = (id: string) => {
@@ -155,9 +315,9 @@ export function Scenarios() {
       arr.splice(idx + 1, 0, copy);
       return arr;
     });
+    markDirty();
   };
 
-  /** Import from current config */
   const importFromConfig = () => {
     const config = useAppStore.getState().config;
     const headers = useAppStore.getState().getEffectiveHeaders();
@@ -173,9 +333,25 @@ export function Scenarios() {
     };
     setSteps((s) => [...s, step]);
     setExpandedId(step.id);
+    markDirty();
   };
 
-  /** Save to DB */
+  /** Import from cURL command into a step */
+  const importCurlToStep = async (stepId: string, curl: string) => {
+    try {
+      const parsed = await parseCurl(curl);
+      updateStep(stepId, {
+        url: parsed.url,
+        method: parsed.method as HttpMethod,
+        headers: parsed.headers || {},
+        body: parsed.body || null,
+      });
+      setCurlInput(null);
+    } catch (err) {
+      alert(`Invalid cURL: ${err}`);
+    }
+  };
+
   const handleSave = async () => {
     try {
       if (currentScenarioId) {
@@ -186,13 +362,16 @@ export function Scenarios() {
       }
       const updated = await loadScenarios();
       setSavedScenarios(updated);
+      useAppStore.getState().setScenariosDirty(false);
     } catch (err) {
       console.error("Save scenario error:", err);
     }
   };
 
-  /** Load from saved */
   const handleLoadScenario = (s: SavedScenario) => {
+    if (steps.length > 0 && useAppStore.getState().scenariosDirty) {
+      if (!confirm("Discard current unsaved changes?")) return;
+    }
     setSteps(
       s.steps.map((st) => ({
         ...st,
@@ -203,29 +382,26 @@ export function Scenarios() {
     setScenarioName(s.name);
     setCurrentScenarioId(s.id);
     setShowSaved(false);
+    useAppStore.getState().setScenariosDirty(false);
   };
 
-  /** Delete saved */
   const handleDeleteScenario = async (id: number, e: React.MouseEvent) => {
     e.stopPropagation();
+    if (!confirm("Delete this saved scenario?")) return;
     try {
       await deleteScenarioFromDB(id);
       const updated = await loadScenarios();
       setSavedScenarios(updated);
-      if (currentScenarioId === id) {
-        setCurrentScenarioId(null);
-      }
+      if (currentScenarioId === id) setCurrentScenarioId(null);
     } catch (err) {
       console.error("Delete scenario error:", err);
     }
   };
 
-  /** Run all steps */
   const runScenario = useCallback(async () => {
     if (steps.length === 0) return;
     setIsRunning(true);
     setRunLog([`▶ Starting scenario with ${steps.length} step(s)...`]);
-
     setSteps((s) =>
       s.map((st) => ({
         ...st,
@@ -248,7 +424,7 @@ export function Scenarios() {
         setSteps((s) =>
           s.map((st) =>
             st.id === step.id
-              ? { ...st, status: "skipped", summary: "No URL configured" }
+              ? { ...st, status: "skipped", summary: "No URL" }
               : st,
           ),
         );
@@ -257,27 +433,27 @@ export function Scenarios() {
       }
 
       try {
-        const config = {
-          url: step.url,
-          method: step.method,
-          headers: step.headers,
-          body: step.body?.trim() || null,
-          virtual_users: step.virtual_users,
-          mode: step.mode,
-          timeout_ms: step.timeout_ms,
-          think_time_ms: step.think_time_ms,
-          duration_secs: step.duration_secs,
-          iterations: step.iterations,
-        };
-
-        const result = await runLoadTest(config, () => {});
+        const result = await runLoadTest(
+          {
+            url: step.url,
+            method: step.method,
+            headers: step.headers,
+            body: step.body?.trim() || null,
+            virtual_users: step.virtual_users,
+            mode: step.mode,
+            timeout_ms: step.timeout_ms,
+            think_time_ms: step.think_time_ms,
+            duration_secs: step.duration_secs,
+            iterations: step.iterations,
+          },
+          () => {},
+        );
 
         const successRate =
           result.total_requests > 0
             ? (result.success_count / result.total_requests) * 100
             : 0;
         const passed = successRate >= 95;
-
         setSteps((s) =>
           s.map((st) =>
             st.id === step.id
@@ -291,7 +467,7 @@ export function Scenarios() {
         );
         setRunLog((log) => [
           ...log,
-          `  ${passed ? "✅" : "❌"} ${successRate.toFixed(0)}% success, ${result.requests_per_second.toFixed(0)} RPS`,
+          `  ${passed ? "✅" : "❌"} ${successRate.toFixed(0)}% success`,
         ]);
       } catch (err) {
         setSteps((s) =>
@@ -309,7 +485,6 @@ export function Scenarios() {
         await new Promise((r) => setTimeout(r, step.think_time_ms));
       }
     }
-
     setRunLog((log) => [...log, `✅ Scenario complete!`]);
     setIsRunning(false);
   }, [steps]);
@@ -321,7 +496,23 @@ export function Scenarios() {
 
     return (
       <div className="flex flex-col items-center justify-center h-full gap-5 text-center">
-        <div className="text-6xl opacity-20">🔗</div>
+        <div className="opacity-20">
+          <svg
+            className="w-16 h-16 mx-auto"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="5" cy="6" r="3" />
+            <circle cx="19" cy="6" r="3" />
+            <circle cx="12" cy="18" r="3" />
+            <line x1="5" y1="9" x2="12" y2="15" />
+            <line x1="19" y1="9" x2="12" y2="15" />
+          </svg>
+        </div>
         <div>
           <p className="text-gray-400 text-sm font-medium">
             Multi-Step Scenarios
@@ -334,9 +525,9 @@ export function Scenarios() {
         <div className="flex flex-col gap-3 w-72">
           <button
             onClick={addStep}
-            className="px-4 py-2.5 rounded-lg text-xs font-medium bg-bg-700 text-gray-400 border border-bg-500 hover:bg-bg-600 hover:text-gray-200 transition-colors"
+            className="px-4 py-2.5 rounded-lg text-xs font-medium bg-bg-700 text-gray-400 border border-bg-500 hover:bg-bg-600 hover:text-gray-200 transition-colors flex items-center justify-center gap-2"
           >
-            + Add Blank Step
+            <IconPlus /> Add Blank Step
           </button>
           {hasConfig && (
             <button
@@ -344,7 +535,7 @@ export function Scenarios() {
               className="px-4 py-2.5 rounded-lg text-xs font-medium bg-primary/10 text-primary border border-primary/30 hover:bg-primary/20 transition-colors text-left"
             >
               <div className="flex items-center gap-2 mb-1">
-                <span>📥</span>
+                <IconImport />
                 <span className="font-bold">Import from Test Config</span>
               </div>
               <div className="text-[10px] text-primary/60 font-mono truncate pl-5">
@@ -367,12 +558,12 @@ export function Scenarios() {
                       {s.steps.length} steps
                     </span>
                   </div>
-                  <button
+                  <span
                     onClick={(e) => handleDeleteScenario(s.id, e)}
-                    className="text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all text-xs"
+                    className="text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
                   >
-                    ✕
-                  </button>
+                    <IconX />
+                  </span>
                 </button>
               ))}
             </div>
@@ -386,39 +577,43 @@ export function Scenarios() {
   return (
     <div className="flex flex-col h-full gap-3 overflow-hidden">
       {/* Toolbar */}
-      <div className="flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between shrink-0 gap-2">
+        <div className="flex items-center gap-3 flex-1 min-w-0">
           <input
-            className="bg-transparent text-sm text-gray-300 font-medium border-b border-transparent hover:border-bg-500 focus:border-primary/50 outline-none px-1 py-0.5 w-40"
+            className="bg-transparent text-sm text-gray-300 font-medium border-b border-transparent hover:border-bg-500 focus:border-primary/50 outline-none px-1 py-0.5 w-44"
             value={scenarioName}
-            onChange={(e) => setScenarioName(e.target.value)}
+            onChange={(e) => {
+              setScenarioName(e.target.value);
+              markDirty();
+            }}
             placeholder="Scenario name"
           />
-          <span className="text-[10px] text-gray-600">
+          <span className="text-[10px] text-gray-600 shrink-0">
             {steps.length} step{steps.length > 1 ? "s" : ""}
           </span>
           <button
             onClick={addStep}
-            className="text-[10px] px-2 py-1 rounded bg-bg-700 text-gray-400 hover:text-primary hover:bg-primary/10 transition-colors"
+            className="text-[10px] px-2 py-1 rounded bg-bg-700 text-gray-400 hover:text-white hover:bg-bg-600 transition-colors flex items-center gap-1"
           >
-            + Add
+            <IconPlus /> Add
           </button>
         </div>
-        <div className="flex items-center gap-2">
-          {/* Save */}
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
             onClick={handleSave}
-            className="text-[10px] px-3 py-1.5 rounded-lg bg-bg-700 text-gray-400 hover:text-gray-200 hover:bg-bg-600 transition-colors font-medium"
+            className="text-[10px] px-2.5 py-1.5 rounded-lg bg-bg-700 text-gray-400 hover:text-white hover:bg-bg-600 transition-colors flex items-center gap-1.5"
+            title="Save scenario"
           >
-            💾 Save
+            <IconSave /> Save
           </button>
           {savedScenarios.length > 0 && (
             <div className="relative">
               <button
                 onClick={() => setShowSaved(!showSaved)}
-                className="text-[10px] px-2 py-1.5 rounded-lg bg-bg-700 text-gray-400 hover:text-gray-200 hover:bg-bg-600 transition-colors"
+                className="text-[10px] px-2.5 py-1.5 rounded-lg bg-bg-700 text-gray-400 hover:text-white hover:bg-bg-600 transition-colors flex items-center gap-1.5"
+                title="Load saved scenario"
               >
-                📂 Load
+                <IconFolder /> Load
               </button>
               {showSaved && (
                 <div className="absolute right-0 top-8 w-56 bg-bg-800 border border-bg-600 rounded-xl shadow-xl z-50 p-2 space-y-1 slide-in">
@@ -436,19 +631,21 @@ export function Scenarios() {
               )}
             </div>
           )}
-          {/* New */}
           <button
             onClick={() => {
+              if (steps.length > 0 && useAppStore.getState().scenariosDirty) {
+                if (!confirm("Discard current scenario?")) return;
+              }
               setSteps([]);
               setScenarioName("Untitled Scenario");
               setCurrentScenarioId(null);
               setRunLog([]);
+              useAppStore.getState().setScenariosDirty(false);
             }}
-            className="text-[10px] px-2 py-1.5 rounded-lg bg-bg-700 text-gray-500 hover:text-gray-300 hover:bg-bg-600 transition-colors"
+            className="text-[10px] px-2.5 py-1.5 rounded-lg bg-bg-700 text-gray-500 hover:text-white hover:bg-bg-600 transition-colors"
           >
             New
           </button>
-          {/* Run */}
           <button
             onClick={runScenario}
             disabled={isRunning}
@@ -458,7 +655,7 @@ export function Scenarios() {
                 : "bg-gradient-to-r from-primary to-secondary text-bg-900 hover:scale-105"
             }`}
           >
-            {isRunning ? "⏳ Running..." : "▶ Run All"}
+            {isRunning ? "Running..." : "▶ Run All"}
           </button>
         </div>
       </div>
@@ -475,8 +672,6 @@ export function Scenarios() {
                 : step.status === "failed"
                   ? "border-red-500/40"
                   : "border-bg-600";
-
-          // Status indicator — colored dot, not checkbox
           const statusDot =
             step.status === "running"
               ? "bg-primary animate-pulse"
@@ -498,11 +693,9 @@ export function Scenarios() {
                 className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-bg-700/50 transition-colors group"
                 onClick={() => setExpandedId(isExpanded ? null : step.id)}
               >
-                {/* Status dot */}
                 <span
                   className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusDot}`}
                 />
-
                 <span className="text-xs text-gray-600 font-mono w-5 shrink-0">
                   {index + 1}.
                 </span>
@@ -519,124 +712,113 @@ export function Scenarios() {
                     {step.summary}
                   </span>
                 )}
-
-                {/* Action icons — always visible, white */}
-                <div className="flex items-center gap-1 shrink-0">
-                  {/* Move up */}
+                <div className="flex items-center gap-0.5 shrink-0">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       if (index > 0)
                         setSteps(moveItem(steps, index, index - 1));
                     }}
-                    className="w-6 h-6 rounded flex items-center justify-center text-gray-500 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
+                    className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
                     title="Move up"
                   >
-                    <svg
-                      className="w-3 h-3"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="18 15 12 9 6 15" />
-                    </svg>
+                    <IconUp />
                   </button>
-                  {/* Move down */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       if (index < steps.length - 1)
                         setSteps(moveItem(steps, index, index + 1));
                     }}
-                    className="w-6 h-6 rounded flex items-center justify-center text-gray-500 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
+                    className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
                     title="Move down"
                   >
-                    <svg
-                      className="w-3 h-3"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <polyline points="6 9 12 15 18 9" />
-                    </svg>
+                    <IconDown />
                   </button>
-                  {/* Duplicate */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       duplicateStep(step.id);
                     }}
-                    className="w-6 h-6 rounded flex items-center justify-center text-gray-500 hover:text-white hover:bg-bg-600 transition-colors"
+                    className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors"
                     title="Duplicate"
                   >
-                    <svg
-                      className="w-3.5 h-3.5"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                    </svg>
+                    <IconCopy />
                   </button>
-                  {/* Delete */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       removeStep(step.id);
                     }}
-                    className="w-6 h-6 rounded flex items-center justify-center text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
                     title="Delete"
                   >
-                    <svg
-                      className="w-3.5 h-3.5"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    >
-                      <line x1="18" y1="6" x2="6" y2="18" />
-                      <line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
+                    <IconX />
                   </button>
-                  {/* Expand chevron */}
-                  <svg
-                    className={`w-3.5 h-3.5 text-gray-600 transition-transform ${isExpanded ? "rotate-180" : ""}`}
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <polyline points="6 9 12 15 18 9" />
-                  </svg>
+                  <span className="text-gray-600 ml-1">
+                    <IconChevron open={isExpanded} />
+                  </span>
                 </div>
               </div>
 
               {/* Expanded editor */}
               {isExpanded && (
                 <div className="border-t border-bg-600 px-4 py-3 space-y-3 slide-in">
-                  {/* Name */}
-                  <input
-                    className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:border-primary/50 outline-none"
-                    placeholder="Step name"
-                    value={step.name}
-                    onChange={(e) =>
-                      updateStep(step.id, { name: e.target.value })
-                    }
-                  />
+                  {/* Name + cURL import */}
+                  <div className="flex gap-2">
+                    <input
+                      className="flex-1 bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:border-primary/50 outline-none"
+                      placeholder="Step name"
+                      value={step.name}
+                      onChange={(e) =>
+                        updateStep(step.id, { name: e.target.value })
+                      }
+                    />
+                    <button
+                      onClick={() =>
+                        setCurlInput(curlInput === step.id ? null : step.id)
+                      }
+                      className={`text-[10px] px-2 py-1 rounded flex items-center gap-1 transition-colors ${
+                        curlInput === step.id
+                          ? "bg-primary/20 text-primary"
+                          : "bg-bg-700 text-gray-500 hover:text-white hover:bg-bg-600"
+                      }`}
+                      title="Import from cURL"
+                    >
+                      <IconTerminal /> cURL
+                    </button>
+                  </div>
+
+                  {/* cURL input */}
+                  {curlInput === step.id && (
+                    <div className="space-y-2 slide-in">
+                      <textarea
+                        className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-2 text-xs font-mono text-gray-200 outline-none focus:border-primary/50 resize-none"
+                        rows={3}
+                        placeholder="curl -X POST https://api.example.com -H 'Content-Type: application/json' -d '{...}'"
+                        id={`curl-${step.id}`}
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            const el = document.getElementById(
+                              `curl-${step.id}`,
+                            ) as HTMLTextAreaElement;
+                            if (el?.value) importCurlToStep(step.id, el.value);
+                          }}
+                          className="text-[10px] px-3 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
+                        >
+                          Parse & Apply
+                        </button>
+                        <button
+                          onClick={() => setCurlInput(null)}
+                          className="text-[10px] px-2 py-1 rounded text-gray-600 hover:text-gray-400 transition-colors"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Method + URL */}
                   <div className="flex gap-2">
@@ -663,6 +845,61 @@ export function Scenarios() {
                         updateStep(step.id, { url: e.target.value })
                       }
                     />
+                  </div>
+
+                  {/* Headers */}
+                  <div>
+                    <label className="text-[10px] text-gray-600 mb-1 block">
+                      Headers
+                    </label>
+                    {Object.entries(step.headers).map(([key, val], hi) => (
+                      <div key={hi} className="flex gap-1 mb-1">
+                        <input
+                          className="flex-1 bg-bg-700 border border-bg-500 rounded px-2 py-1 text-[11px] font-mono text-gray-300 outline-none focus:border-primary/50"
+                          value={key}
+                          placeholder="Key"
+                          onChange={(e) => {
+                            const newHeaders = { ...step.headers };
+                            delete newHeaders[key];
+                            newHeaders[e.target.value] = val;
+                            updateStep(step.id, { headers: newHeaders });
+                          }}
+                        />
+                        <input
+                          className="flex-1 bg-bg-700 border border-bg-500 rounded px-2 py-1 text-[11px] font-mono text-gray-300 outline-none focus:border-primary/50"
+                          value={val}
+                          placeholder="Value"
+                          onChange={(e) => {
+                            updateStep(step.id, {
+                              headers: {
+                                ...step.headers,
+                                [key]: e.target.value,
+                              },
+                            });
+                          }}
+                        />
+                        <button
+                          onClick={() => {
+                            const newHeaders = { ...step.headers };
+                            delete newHeaders[key];
+                            updateStep(step.id, { headers: newHeaders });
+                          }}
+                          className="text-gray-600 hover:text-red-400 w-5 flex items-center justify-center"
+                        >
+                          <IconX />
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      onClick={() =>
+                        updateStep(step.id, {
+                          headers: { ...step.headers, "": "" },
+                        })
+                      }
+                      className="text-[10px] text-gray-600 hover:text-primary transition-colors flex items-center gap-1 mt-1"
+                    >
+                      <IconPlus /> Add Header
+                    </button>
                   </div>
 
                   {/* VUs + Mode + Delay */}

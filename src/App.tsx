@@ -91,7 +91,18 @@ function App() {
     runStatus,
     currentResult,
     history,
+    scenariosDirty,
   } = useAppStore();
+
+  /** Guard chuyển section — cảnh báo nếu có unsaved changes */
+  const handleSectionChange = (id: SidebarSection) => {
+    if (activeSection === "scenarios" && id !== "scenarios" && scenariosDirty) {
+      if (!confirm("You have unsaved scenario changes. Leave anyway?")) return;
+      useAppStore.getState().setScenariosDirty(false);
+    }
+    setActiveSection(id);
+    if (id === "test") setActiveTab("test");
+  };
 
   // ─── Resizable left panel ───
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
@@ -188,10 +199,7 @@ function App() {
           {SIDEBAR_ITEMS.map((item) => (
             <button
               key={item.id}
-              onClick={() => {
-                setActiveSection(item.id);
-                if (item.id === "test") setActiveTab("test");
-              }}
+              onClick={() => handleSectionChange(item.id)}
               title={item.tooltip}
               className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-1 transition-all ${
                 activeSection === item.id
