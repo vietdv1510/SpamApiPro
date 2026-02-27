@@ -482,7 +482,21 @@ impl LoadTestEngine {
 
                 let request = match builder.build() {
                     Ok(r) => r,
-                    Err(_) => return,
+                    Err(e) => {
+                        let res = RequestResult {
+                            id,
+                            success: false,
+                            status_code: None,
+                            latency_ms: 0.0,
+                            error: Some(format!("Request build error: {}", e)),
+                            response_size_bytes: 0,
+                            timestamp_ms: now_epoch,
+                            response_body: None,
+                        };
+                        results.lock().push(res.clone());
+                        callback(0.0, res); // We don't know progress easily here, just pass 0
+                        return;
+                    }
                 };
 
                 let result = tokio::select! {
@@ -643,7 +657,21 @@ impl LoadTestEngine {
 
                     let request = match builder.build() {
                         Ok(r) => r,
-                        Err(_) => return,
+                        Err(e) => {
+                            let res = RequestResult {
+                                id,
+                                success: false,
+                                status_code: None,
+                                latency_ms: 0.0,
+                                error: Some(format!("Request build error: {}", e)),
+                                response_size_bytes: 0,
+                                timestamp_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
+                                response_body: None,
+                            };
+                            results.lock().push(res.clone());
+                            callback(0.0, res);
+                            return;
+                        }
                     };
                     let result = tokio::select! {
                         biased;
@@ -737,7 +765,10 @@ impl LoadTestEngine {
                  let permit = tokio::select! {
                     biased;
                     _ = cancel.cancelled() => break,
-                    p = semaphore.clone().acquire_owned() => p.unwrap()
+                    p = semaphore.clone().acquire_owned() => match p {
+                        Ok(p) => p,
+                        Err(_) => break,
+                    }
                 };
                 let results = Arc::clone(&results);
                 let config = Arc::clone(&config);
@@ -765,7 +796,24 @@ impl LoadTestEngine {
                     if let Some(b) = &body_bytes {
                         builder = builder.body(b.clone());
                     }
-                    let request = builder.build().unwrap();
+                    let request = match builder.build() {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let res = RequestResult {
+                                id,
+                                success: false,
+                                status_code: None,
+                                latency_ms: 0.0,
+                                error: Some(format!("Request build error: {}", e)),
+                                response_size_bytes: 0,
+                                timestamp_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
+                                response_body: None,
+                            };
+                            results.lock().push(res.clone());
+                            callback(0.0, res);
+                            return false;
+                        }
+                    };
 
                     let (success, res) = tokio::select! {
                         biased;
