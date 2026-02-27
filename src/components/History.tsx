@@ -65,7 +65,16 @@ export function History() {
     e.stopPropagation();
     const store = useAppStore.getState();
     store.applyParsedConfig(entry.config);
+    store.setActiveSection("test");
     store.setActiveTab("test");
+  };
+
+  /** Click vào card → xem results */
+  const handleViewResult = (entry: (typeof history)[0]) => {
+    const store = useAppStore.getState();
+    store.setCurrentResult(entry.result);
+    store.setActiveSection("test");
+    store.setActiveTab("results");
   };
 
   return (
@@ -92,24 +101,20 @@ export function History() {
           <div
             key={entry.id}
             className="bg-bg-800 border border-bg-600 rounded-xl p-4 hover:border-bg-500 transition-all cursor-pointer group relative"
-            onClick={() => {
-              const store = useAppStore.getState();
-              store.setCurrentResult(r);
-              store.setActiveTab("results");
-            }}
+            onClick={() => handleViewResult(entry)}
           >
-            {/* Action buttons — hover visible */}
-            <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+            {/* Action buttons */}
+            <div className="absolute top-2 right-2 flex items-center gap-1">
               <button
                 onClick={(e) => handleReuseConfig(entry, e)}
-                className="text-primary hover:text-white text-[10px] px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 transition-colors font-medium"
+                className="text-[10px] px-2 py-1 rounded bg-primary/10 text-primary/70 hover:text-primary hover:bg-primary/20 transition-colors font-medium"
                 title="Load this config into the editor"
               >
                 🔄 Reuse
               </button>
               <button
                 onClick={(e) => handleDelete(entry.id, e)}
-                className="text-gray-700 hover:text-red-400 text-xs p-1 rounded hover:bg-red-500/10 transition-colors"
+                className="text-gray-700 hover:text-red-400 text-xs p-1 rounded hover:bg-red-500/10 transition-colors opacity-0 group-hover:opacity-100"
                 title="Delete"
               >
                 ✕

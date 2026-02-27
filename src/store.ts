@@ -59,6 +59,7 @@ export interface TestResult {
 }
 
 export type AppTab = "test" | "results" | "history" | "scenarios";
+export type SidebarSection = "test" | "scenarios" | "history";
 export type RunStatus =
   | "idle"
   | "running"
@@ -100,6 +101,7 @@ interface AppState {
   history: HistoryItem[];
 
   // UI state
+  activeSection: SidebarSection;
   activeTab: AppTab;
   curlImportText: string;
   showCurlImport: boolean;
@@ -112,6 +114,7 @@ interface AppState {
   setCurrentResult: (r: TestResult | null) => void;
   addLiveResults: (batch: RequestResult[]) => void;
   resetLive: () => void;
+  setActiveSection: (section: SidebarSection) => void;
   setActiveTab: (tab: AppTab) => void;
   setCurlImportText: (text: string) => void;
   setShowCurlImport: (show: boolean) => void;
@@ -144,6 +147,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
   liveTimeline: [],
   liveCounters: { done: 0, success: 0, errors: 0, totalLatency: 0 },
   history: [],
+  activeSection: "test" as SidebarSection,
   activeTab: "test" as AppTab,
   curlImportText: "",
   showCurlImport: false,
@@ -182,6 +186,8 @@ export const useAppStore = create<AppState>()((set, get) => ({
       liveCounters: { done: 0, success: 0, errors: 0, totalLatency: 0 },
       progress: 0,
     }),
+
+  setActiveSection: (activeSection) => set({ activeSection }),
 
   setActiveTab: (activeTab) => set({ activeTab }),
 

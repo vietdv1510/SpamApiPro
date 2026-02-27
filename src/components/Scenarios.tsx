@@ -469,13 +469,21 @@ export function Scenarios() {
                     </div>
                     <div className="flex-1">
                       <label className="text-[10px] text-gray-600 mb-1 block">
-                        Think Time (ms)
+                        Delay After (ms)
+                        <span
+                          className="text-gray-700 ml-1"
+                          title="Wait time before running the next step in the flow"
+                        >
+                          ⓘ
+                        </span>
                       </label>
                       <input
                         type="number"
                         className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-200 outline-none focus:border-primary/50"
                         value={step.think_time_ms}
                         min={0}
+                        step={100}
+                        placeholder="0"
                         onChange={(e) =>
                           updateStep(step.id, {
                             think_time_ms: parseInt(e.target.value) || 0,

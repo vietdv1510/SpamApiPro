@@ -1,30 +1,76 @@
-import React, { useState, useRef, useCallback } from "react";
+import React, { useRef, useCallback, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { TestConfig } from "./components/TestConfig";
 import { LiveMonitor } from "./components/LiveMonitor";
 import { ResultsDashboard } from "./components/ResultsDashboard";
 import { History } from "./components/History";
 import { Scenarios } from "./components/Scenarios";
-import { useAppStore } from "./store";
+import { useAppStore, type SidebarSection } from "./store";
 
-/** Sidebar sections — icon nav bên trái */
-type SidebarSection = "test" | "scenarios" | "history";
-
+/** Sidebar items — monochrome icons */
 const SIDEBAR_ITEMS: {
   id: SidebarSection;
-  icon: string;
   label: string;
   tooltip: string;
 }[] = [
-  { id: "test", icon: "⚡", label: "Test", tooltip: "Load Test" },
-  {
-    id: "scenarios",
-    icon: "🔗",
-    label: "Flows",
-    tooltip: "Multi-Step Scenarios",
-  },
-  { id: "history", icon: "📋", label: "History", tooltip: "Test History" },
+  { id: "test", label: "Test", tooltip: "Load Test" },
+  { id: "scenarios", label: "Flows", tooltip: "Multi-Step Scenarios" },
+  { id: "history", label: "History", tooltip: "Test History" },
 ];
+
+/** Simple monochrome SVG icons */
+function SidebarIcon({ id }: { id: SidebarSection }) {
+  const cls = "w-5 h-5";
+  switch (id) {
+    case "test":
+      return (
+        <svg
+          className={cls}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+        </svg>
+      );
+    case "scenarios":
+      return (
+        <svg
+          className={cls}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="5" cy="6" r="3" />
+          <circle cx="19" cy="6" r="3" />
+          <circle cx="12" cy="18" r="3" />
+          <line x1="5" y1="9" x2="12" y2="15" />
+          <line x1="19" y1="9" x2="12" y2="15" />
+        </svg>
+      );
+    case "history":
+      return (
+        <svg
+          className={cls}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+      );
+  }
+}
 
 /** Sub-tabs for the Test section */
 const TEST_TABS = [
@@ -37,10 +83,15 @@ const MAX_PANEL_WIDTH = 600;
 const DEFAULT_PANEL_WIDTH = 340;
 
 function App() {
-  const { activeTab, setActiveTab, runStatus, currentResult, history } =
-    useAppStore();
-
-  const [activeSection, setActiveSection] = useState<SidebarSection>("test");
+  const {
+    activeSection,
+    setActiveSection,
+    activeTab,
+    setActiveTab,
+    runStatus,
+    currentResult,
+    history,
+  } = useAppStore();
 
   // ─── Resizable left panel ───
   const [panelWidth, setPanelWidth] = useState(DEFAULT_PANEL_WIDTH);
@@ -133,7 +184,7 @@ function App() {
       {/* Main Layout: Sidebar + Content */}
       <div className="flex flex-1 overflow-hidden">
         {/* ─── Vertical Sidebar ─── */}
-        <div className="w-14 shrink-0 bg-bg-900 border-r border-bg-700 flex flex-col items-center py-2 gap-1">
+        <div className="w-16 shrink-0 bg-bg-900 border-r border-bg-700 flex flex-col items-center py-3 gap-2">
           {SIDEBAR_ITEMS.map((item) => (
             <button
               key={item.id}
@@ -142,14 +193,14 @@ function App() {
                 if (item.id === "test") setActiveTab("test");
               }}
               title={item.tooltip}
-              className={`w-10 h-10 rounded-xl flex flex-col items-center justify-center gap-0.5 transition-all ${
+              className={`w-12 h-12 rounded-xl flex flex-col items-center justify-center gap-1 transition-all ${
                 activeSection === item.id
                   ? "bg-primary/10 text-primary border border-primary/30"
                   : "text-gray-600 hover:text-gray-400 hover:bg-bg-700 border border-transparent"
               }`}
             >
-              <span className="text-sm leading-none">{item.icon}</span>
-              <span className="text-[8px] font-medium leading-none">
+              <SidebarIcon id={item.id} />
+              <span className="text-[9px] font-medium leading-none">
                 {item.label}
               </span>
             </button>
