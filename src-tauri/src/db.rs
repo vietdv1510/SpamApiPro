@@ -74,7 +74,7 @@ impl Database {
             )",
             [],
         )
-        .map_err(|e| format!("Cannot create scenarios table: {}", e))?;;
+        .map_err(|e| format!("Cannot create scenarios table: {}", e))?;
 
         eprintln!("📦 [DB] SQLite opened at {:?}", db_path);
         Ok(Self {
