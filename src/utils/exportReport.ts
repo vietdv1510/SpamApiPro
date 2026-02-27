@@ -1,5 +1,5 @@
 import { writeTextFile, mkdir } from "@tauri-apps/plugin-fs";
-import { open } from "@tauri-apps/plugin-shell";
+import { invoke } from "@tauri-apps/api/core";
 import { appDataDir } from "@tauri-apps/api/path";
 import type { TestResult } from "../store";
 
@@ -192,16 +192,16 @@ export async function exportReportHTML(
   // Lưu file vào app data dir rồi mở bằng browser hệ thống
   const fileName = `report-${fileTs}.html`;
   const dataDir = await appDataDir();
-  const filePath = `${dataDir}reports`;
+  const reportsDir = `${dataDir}/reports`;
 
   // Tạo thư mục reports nếu cần
   try {
-    await mkdir(filePath, { recursive: true });
+    await mkdir(reportsDir, { recursive: true });
   } catch {
     /* already exists */
   }
 
-  const fullPath = `${filePath}/${fileName}`;
+  const fullPath = `${reportsDir}/${fileName}`;
   await writeTextFile(fullPath, html);
-  await open(fullPath);
+  await invoke("open_file", { path: fullPath });
 }

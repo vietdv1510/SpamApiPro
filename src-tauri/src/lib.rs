@@ -3,8 +3,8 @@ mod db;
 mod engine;
 
 use commands::{
-    clear_all_history, delete_history, get_history, parse_curl, run_load_test, save_history,
-    stop_test, AppState,
+    clear_all_history, delete_history, get_history, open_file, parse_curl, run_load_test,
+    save_history, stop_test, AppState,
 };
 use tauri::Manager;
 
@@ -35,6 +35,7 @@ pub fn run() {
             save_history,
             delete_history,
             clear_all_history,
+            open_file,
         ])
         .run(tauri::generate_context!())
     {

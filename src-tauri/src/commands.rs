@@ -168,6 +168,25 @@ pub fn clear_all_history(state: State<'_, AppState>) -> Result<(), String> {
     state.db.clear_history()
 }
 
+/// Mở file bằng ứng dụng mặc định của hệ thống (macOS: open, Linux: xdg-open, Windows: start)
+#[tauri::command]
+pub fn open_file(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    let cmd = "open";
+    #[cfg(target_os = "linux")]
+    let cmd = "xdg-open";
+    #[cfg(target_os = "windows")]
+    let cmd = "cmd";
+
+    #[cfg(target_os = "windows")]
+    let result = std::process::Command::new(cmd).args(["/C", "start", "", &path]).spawn();
+    #[cfg(not(target_os = "windows"))]
+    let result = std::process::Command::new(cmd).arg(&path).spawn();
+
+    result.map_err(|e| format!("Cannot open file: {}", e))?;
+    Ok(())
+}
+
 /// Tokenize curl command — respects single/double quoted strings
 fn tokenize_curl(cmd: &str) -> Vec<String> {
     let mut tokens: Vec<String> = Vec::new();
