@@ -7,6 +7,9 @@ export type BatchProgressCallback = (
   batch: RequestResult[],
 ) => void;
 
+/** Global run generation counter — tăng mỗi lần chạy test mới */
+let currentRunGeneration = 0;
+
 /**
  * Run load test với batched progress events.
  * Dùng requestAnimationFrame để gom events → giảm re-renders từ 10K+ xuống ~600
@@ -15,10 +18,19 @@ export async function runLoadTest(
   config: TestConfig,
   onBatch: BatchProgressCallback,
 ): Promise<TestResult> {
+  // Tăng generation — vô hiệu hóa mọi callback từ run cũ
+  const thisGeneration = ++currentRunGeneration;
+
   let buffer: Array<{ progress: number; result: RequestResult }> = [];
   let rafId: number | null = null;
 
   const flush = () => {
+    // ⚡ CRITICAL: Chỉ flush nếu đây vẫn là run hiện tại
+    if (thisGeneration !== currentRunGeneration) {
+      buffer = [];
+      rafId = null;
+      return;
+    }
     const batch = buffer;
     buffer = [];
     rafId = null;
@@ -33,6 +45,8 @@ export async function runLoadTest(
   const unlisten = await listen<{ progress: number; result: RequestResult }>(
     "test_progress",
     (event) => {
+      // Bỏ qua events từ run cũ
+      if (thisGeneration !== currentRunGeneration) return;
       buffer.push(event.payload);
       if (rafId === null) {
         rafId = requestAnimationFrame(flush);
@@ -42,9 +56,9 @@ export async function runLoadTest(
 
   try {
     const result = await invoke<TestResult>("run_load_test", { config });
-    // Flush remaining buffered events
+    // Flush remaining buffered events (chỉ nếu vẫn là run hiện tại)
     if (rafId !== null) cancelAnimationFrame(rafId);
-    if (buffer.length > 0) flush();
+    if (buffer.length > 0 && thisGeneration === currentRunGeneration) flush();
     return result;
   } finally {
     unlisten();

@@ -22,14 +22,15 @@ export function useTestRunner() {
       return { error: "Invalid URL — must start with http:// or https://" };
     }
 
-    // Reset hoàn toàn state trước khi chạy
+    // Reset hoàn toàn state trong 1 lần set() duy nhất — atomic, không bị batch lẫn
     useAppStore.setState({
       runStatus: "running",
       activeTab: "test",
       progress: 0,
       currentResult: null,
+      liveTimeline: [],
+      liveCounters: { done: 0, success: 0, errors: 0, totalLatency: 0 },
     });
-    state.resetLive();
 
     const effectiveConfig = {
       ...config,
