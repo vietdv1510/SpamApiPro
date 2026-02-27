@@ -1,4 +1,4 @@
-use crate::db::{Database, HistoryEntry};
+use crate::db::{Database, HistoryEntry, ScenarioEntry};
 use crate::engine::{LoadTestEngine, TestConfig, TestResult};
 use parking_lot::Mutex;
 use std::path::PathBuf;
@@ -190,7 +190,7 @@ pub fn open_file(path: String) -> Result<(), String> {
 // ─── Scenario Commands ───
 
 #[tauri::command]
-pub fn get_scenarios(state: State<'_, AppState>) -> Result<Vec<db::ScenarioEntry>, String> {
+pub fn get_scenarios(state: State<'_, AppState>) -> Result<Vec<ScenarioEntry>, String> {
     state.db.get_scenarios()
 }
 
