@@ -1,8 +1,14 @@
 import { useState, useCallback, useEffect } from "react";
-import { useAppStore, type HttpMethod, type TestMode } from "../store";
+import {
+  useAppStore,
+  type HttpMethod,
+  type TestMode,
+  type TestResult,
+} from "../store";
 import { runLoadTest, parseCurl } from "../tauri";
 import { invoke } from "@tauri-apps/api/core";
 import { confirmDialog, showToast } from "./Dialogs";
+import { ResultsDashboard } from "./ResultsDashboard";
 
 /** Một bước trong scenario */
 interface ScenarioStep {
@@ -277,6 +283,14 @@ export function Scenarios() {
   const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>([]);
   const [curlInput, setCurlInput] = useState<string | null>(null);
 
+  /** Per-step full TestResult for detail panel */
+  const [stepResults, setStepResults] = useState<Record<string, TestResult>>(
+    {},
+  );
+  const [selectedResultStepId, setSelectedResultStepId] = useState<
+    string | null
+  >(null);
+
   const markDirty = () => useAppStore.getState().setScenariosDirty(true);
 
   useEffect(() => {
@@ -419,6 +433,8 @@ export function Scenarios() {
     setIsRunning(true);
     setScenarioStatus("running");
     setRunLog([]);
+    setStepResults({});
+    setSelectedResultStepId(null);
     setRunResults(
       steps.map((s) => ({
         stepName: s.name,
@@ -514,6 +530,9 @@ export function Scenarios() {
               : r,
           ),
         );
+        // Save full result for split panel
+        setStepResults((prev) => ({ ...prev, [step.id]: result }));
+        if (i === 0) setSelectedResultStepId(step.id);
       } catch (err) {
         allPassed = false;
         setSteps((s) =>
@@ -700,6 +719,10 @@ export function Scenarios() {
               setCurrentScenarioId(null);
               setRunLog([]);
               setExpandedId(null);
+              setStepResults({});
+              setSelectedResultStepId(null);
+              setRunResults([]);
+              setScenarioStatus("idle");
               useAppStore.getState().setScenariosDirty(false);
               showToast("New scenario created");
             }}
@@ -718,386 +741,449 @@ export function Scenarios() {
           >
             {isRunning ? "Running..." : "▶ Run All"}
           </button>
+          {Object.keys(stepResults).length > 0 && (
+            <button
+              onClick={() => {
+                setStepResults({});
+                setSelectedResultStepId(null);
+                setRunResults([]);
+                setScenarioStatus("idle");
+              }}
+              className="text-[10px] px-2 py-1.5 rounded-lg text-gray-500 hover:text-white hover:bg-bg-600 transition-colors"
+            >
+              ✕ Results
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Steps list */}
-      <div className="flex-1 overflow-y-auto space-y-2">
-        {steps.map((step, index) => {
-          const isExpanded = expandedId === step.id;
-          const statusBorder =
-            step.status === "running"
-              ? "border-primary/40"
-              : step.status === "passed"
-                ? "border-success/40"
-                : step.status === "failed"
-                  ? "border-red-500/40"
-                  : "border-bg-600";
-          const statusDot =
-            step.status === "running"
-              ? "bg-primary animate-pulse"
-              : step.status === "passed"
-                ? "bg-success"
-                : step.status === "failed"
-                  ? "bg-red-500"
-                  : step.status === "skipped"
-                    ? "bg-gray-600"
-                    : "bg-bg-500";
+      {/* Content: split when results, full editor otherwise */}
+      <div
+        className={`flex-1 overflow-hidden ${Object.keys(stepResults).length > 0 ? "flex gap-3" : "flex flex-col"}`}
+      >
+        {/* Steps list */}
+        <div
+          className={`overflow-y-auto space-y-2 ${Object.keys(stepResults).length > 0 ? "w-1/2 shrink-0" : "flex-1"}`}
+        >
+          {steps.map((step, index) => {
+            const isExpanded = expandedId === step.id;
+            const statusBorder =
+              step.status === "running"
+                ? "border-primary/40"
+                : step.status === "passed"
+                  ? "border-success/40"
+                  : step.status === "failed"
+                    ? "border-red-500/40"
+                    : "border-bg-600";
+            const statusDot =
+              step.status === "running"
+                ? "bg-primary animate-pulse"
+                : step.status === "passed"
+                  ? "bg-success"
+                  : step.status === "failed"
+                    ? "bg-red-500"
+                    : step.status === "skipped"
+                      ? "bg-gray-600"
+                      : "bg-bg-500";
 
-          return (
-            <div
-              key={step.id}
-              className={`bg-bg-800 border ${statusBorder} rounded-xl overflow-hidden transition-all`}
-            >
-              {/* Step header */}
+            return (
               <div
-                className="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-bg-700/50 transition-colors group"
-                onClick={() => setExpandedId(isExpanded ? null : step.id)}
+                key={step.id}
+                className={`bg-bg-800 border ${statusBorder} rounded-xl overflow-hidden transition-all`}
               >
-                <span
-                  className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusDot}`}
-                />
-                <span className="text-xs text-gray-600 font-mono w-5 shrink-0">
-                  {index + 1}.
-                </span>
-                <span
-                  className={`text-xs font-mono font-bold shrink-0 ${METHOD_COLORS[step.method] || "text-gray-400"}`}
+                {/* Step header */}
+                <div
+                  className={`flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-bg-700/50 transition-colors group ${
+                    selectedResultStepId === step.id && stepResults[step.id]
+                      ? "bg-bg-700/30"
+                      : ""
+                  }`}
+                  onClick={() => {
+                    setExpandedId(isExpanded ? null : step.id);
+                    if (stepResults[step.id]) setSelectedResultStepId(step.id);
+                  }}
                 >
-                  {step.method}
-                </span>
-                <span className="text-xs text-gray-400 truncate flex-1 font-mono">
-                  {step.url || "(no URL)"}
-                </span>
-                {step.summary && (
-                  <span className="text-[10px] text-gray-500 font-mono shrink-0">
-                    {step.summary}
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full shrink-0 ${statusDot}`}
+                  />
+                  <span className="text-xs text-gray-600 font-mono w-5 shrink-0">
+                    {index + 1}.
                   </span>
-                )}
-                <div className="flex items-center gap-0.5 shrink-0">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (index > 0)
-                        setSteps(moveItem(steps, index, index - 1));
-                    }}
-                    className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
-                    title="Move up"
+                  <span
+                    className={`text-xs font-mono font-bold shrink-0 ${METHOD_COLORS[step.method] || "text-gray-400"}`}
                   >
-                    <IconUp />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (index < steps.length - 1)
-                        setSteps(moveItem(steps, index, index + 1));
-                    }}
-                    className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
-                    title="Move down"
-                  >
-                    <IconDown />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      duplicateStep(step.id);
-                    }}
-                    className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors"
-                    title="Duplicate"
-                  >
-                    <IconCopy />
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      removeStep(step.id);
-                    }}
-                    className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
-                    title="Delete"
-                  >
-                    <IconX />
-                  </button>
-                  <span className="text-gray-600 ml-1">
-                    <IconChevron open={isExpanded} />
+                    {step.method}
                   </span>
-                </div>
-              </div>
-
-              {/* Expanded editor */}
-              {isExpanded && (
-                <div className="border-t border-bg-600 px-4 py-3 space-y-3 slide-in">
-                  {/* Name + cURL import */}
-                  <div className="flex gap-2">
-                    <input
-                      className="flex-1 bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:border-primary/50 outline-none"
-                      placeholder="Step name"
-                      value={step.name}
-                      onChange={(e) =>
-                        updateStep(step.id, { name: e.target.value })
-                      }
-                    />
-                    <button
-                      onClick={() =>
-                        setCurlInput(curlInput === step.id ? null : step.id)
-                      }
-                      className={`text-[10px] px-2 py-1 rounded flex items-center gap-1 transition-colors ${
-                        curlInput === step.id
-                          ? "bg-primary/20 text-primary"
-                          : "bg-bg-700 text-gray-500 hover:text-white hover:bg-bg-600"
-                      }`}
-                      title="Import from cURL"
-                    >
-                      <IconTerminal /> cURL
-                    </button>
-                  </div>
-
-                  {/* cURL input */}
-                  {curlInput === step.id && (
-                    <div className="space-y-2 slide-in">
-                      <textarea
-                        className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-2 text-xs font-mono text-gray-200 outline-none focus:border-primary/50 resize-none"
-                        rows={3}
-                        placeholder="curl -X POST https://api.example.com -H 'Content-Type: application/json' -d '{...}'"
-                        id={`curl-${step.id}`}
-                      />
-                      <div className="flex gap-2">
-                        <button
-                          onClick={() => {
-                            const el = document.getElementById(
-                              `curl-${step.id}`,
-                            ) as HTMLTextAreaElement;
-                            if (el?.value) importCurlToStep(step.id, el.value);
-                          }}
-                          className="text-[10px] px-3 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
-                        >
-                          Parse & Apply
-                        </button>
-                        <button
-                          onClick={() => setCurlInput(null)}
-                          className="text-[10px] px-2 py-1 rounded text-gray-600 hover:text-gray-400 transition-colors"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
+                  <span className="text-xs text-gray-400 truncate flex-1 font-mono">
+                    {step.url || "(no URL)"}
+                  </span>
+                  {step.summary && (
+                    <span className="text-[10px] text-gray-500 font-mono shrink-0">
+                      {step.summary}
+                    </span>
                   )}
-
-                  {/* Method + URL */}
-                  <div className="flex gap-2">
-                    <select
-                      className="w-24 bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs font-mono text-gray-200"
-                      value={step.method}
-                      onChange={(e) =>
-                        updateStep(step.id, {
-                          method: e.target.value as HttpMethod,
-                        })
-                      }
-                    >
-                      {METHODS.map((m) => (
-                        <option key={m} value={m}>
-                          {m}
-                        </option>
-                      ))}
-                    </select>
-                    <input
-                      className="flex-1 bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-200 focus:border-primary/50 outline-none"
-                      placeholder="https://api.example.com/endpoint"
-                      value={step.url}
-                      onChange={(e) =>
-                        updateStep(step.id, { url: e.target.value })
-                      }
-                    />
-                  </div>
-
-                  {/* Headers */}
-                  <div>
-                    <label className="text-[10px] text-gray-600 mb-1 block">
-                      Headers
-                    </label>
-                    {Object.entries(step.headers).map(([key, val], hi) => (
-                      <div key={hi} className="flex gap-1 mb-1">
-                        <input
-                          className="flex-1 bg-bg-700 border border-bg-500 rounded px-2 py-1 text-[11px] font-mono text-gray-300 outline-none focus:border-primary/50"
-                          value={key}
-                          placeholder="Key"
-                          onChange={(e) => {
-                            const newHeaders = { ...step.headers };
-                            delete newHeaders[key];
-                            newHeaders[e.target.value] = val;
-                            updateStep(step.id, { headers: newHeaders });
-                          }}
-                        />
-                        <input
-                          className="flex-1 bg-bg-700 border border-bg-500 rounded px-2 py-1 text-[11px] font-mono text-gray-300 outline-none focus:border-primary/50"
-                          value={val}
-                          placeholder="Value"
-                          onChange={(e) => {
-                            updateStep(step.id, {
-                              headers: {
-                                ...step.headers,
-                                [key]: e.target.value,
-                              },
-                            });
-                          }}
-                        />
-                        <button
-                          onClick={() => {
-                            const newHeaders = { ...step.headers };
-                            delete newHeaders[key];
-                            updateStep(step.id, { headers: newHeaders });
-                          }}
-                          className="text-gray-600 hover:text-red-400 w-5 flex items-center justify-center"
-                        >
-                          <IconX />
-                        </button>
-                      </div>
-                    ))}
+                  <div className="flex items-center gap-0.5 shrink-0">
                     <button
-                      onClick={() =>
-                        updateStep(step.id, {
-                          headers: { ...step.headers, "": "" },
-                        })
-                      }
-                      className="text-[10px] text-gray-600 hover:text-primary transition-colors flex items-center gap-1 mt-1"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (index > 0)
+                          setSteps(moveItem(steps, index, index - 1));
+                      }}
+                      className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Move up"
                     >
-                      <IconPlus /> Add Header
+                      <IconUp />
                     </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (index < steps.length - 1)
+                          setSteps(moveItem(steps, index, index + 1));
+                      }}
+                      className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors opacity-0 group-hover:opacity-100"
+                      title="Move down"
+                    >
+                      <IconDown />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        duplicateStep(step.id);
+                      }}
+                      className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-white hover:bg-bg-600 transition-colors"
+                      title="Duplicate"
+                    >
+                      <IconCopy />
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeStep(step.id);
+                      }}
+                      className="w-6 h-6 rounded flex items-center justify-center text-gray-600 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                      title="Delete"
+                    >
+                      <IconX />
+                    </button>
+                    <span className="text-gray-600 ml-1">
+                      <IconChevron open={isExpanded} />
+                    </span>
                   </div>
+                </div>
 
-                  {/* VUs + Mode + Delay */}
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <label className="text-[10px] text-gray-600 mb-1 block">
-                        Requests / VUs
-                      </label>
+                {/* Expanded editor */}
+                {isExpanded && (
+                  <div className="border-t border-bg-600 px-4 py-3 space-y-3 slide-in">
+                    {/* Name + cURL import */}
+                    <div className="flex gap-2">
                       <input
-                        type="number"
-                        className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-200 outline-none focus:border-primary/50"
-                        value={step.virtual_users}
-                        min={1}
+                        className="flex-1 bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:border-primary/50 outline-none"
+                        placeholder="Step name"
+                        value={step.name}
                         onChange={(e) =>
-                          updateStep(step.id, {
-                            virtual_users: parseInt(e.target.value) || 1,
-                          })
+                          updateStep(step.id, { name: e.target.value })
                         }
                       />
+                      <button
+                        onClick={() =>
+                          setCurlInput(curlInput === step.id ? null : step.id)
+                        }
+                        className={`text-[10px] px-2 py-1 rounded flex items-center gap-1 transition-colors ${
+                          curlInput === step.id
+                            ? "bg-primary/20 text-primary"
+                            : "bg-bg-700 text-gray-500 hover:text-white hover:bg-bg-600"
+                        }`}
+                        title="Import from cURL"
+                      >
+                        <IconTerminal /> cURL
+                      </button>
                     </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] text-gray-600 mb-1 block">
-                        Mode
-                      </label>
+
+                    {/* cURL input */}
+                    {curlInput === step.id && (
+                      <div className="space-y-2 slide-in">
+                        <textarea
+                          className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-2 text-xs font-mono text-gray-200 outline-none focus:border-primary/50 resize-none"
+                          rows={3}
+                          placeholder="curl -X POST https://api.example.com -H 'Content-Type: application/json' -d '{...}'"
+                          id={`curl-${step.id}`}
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              const el = document.getElementById(
+                                `curl-${step.id}`,
+                              ) as HTMLTextAreaElement;
+                              if (el?.value)
+                                importCurlToStep(step.id, el.value);
+                            }}
+                            className="text-[10px] px-3 py-1 rounded bg-primary/10 text-primary hover:bg-primary/20 transition-colors font-medium"
+                          >
+                            Parse & Apply
+                          </button>
+                          <button
+                            onClick={() => setCurlInput(null)}
+                            className="text-[10px] px-2 py-1 rounded text-gray-600 hover:text-gray-400 transition-colors"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Method + URL */}
+                    <div className="flex gap-2">
                       <select
-                        className="w-full bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs text-gray-200"
-                        value={step.mode}
+                        className="w-24 bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs font-mono text-gray-200"
+                        value={step.method}
                         onChange={(e) =>
                           updateStep(step.id, {
-                            mode: e.target.value as TestMode,
+                            method: e.target.value as HttpMethod,
                           })
                         }
                       >
-                        <option value="burst">Burst</option>
-                        <option value="constant">Constant</option>
-                        <option value="ramp_up">Ramp Up</option>
-                        <option value="stress_test">Stress Test</option>
+                        {METHODS.map((m) => (
+                          <option key={m} value={m}>
+                            {m}
+                          </option>
+                        ))}
                       </select>
-                    </div>
-                    <div className="flex-1">
-                      <label className="text-[10px] text-gray-600 mb-1 block">
-                        Delay After (ms)
-                      </label>
                       <input
-                        type="number"
-                        className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-200 outline-none focus:border-primary/50"
-                        value={step.think_time_ms}
-                        min={0}
-                        step={100}
-                        placeholder="0"
+                        className="flex-1 bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-200 focus:border-primary/50 outline-none"
+                        placeholder="https://api.example.com/endpoint"
+                        value={step.url}
                         onChange={(e) =>
-                          updateStep(step.id, {
-                            think_time_ms: parseInt(e.target.value) || 0,
-                          })
+                          updateStep(step.id, { url: e.target.value })
                         }
                       />
                     </div>
-                  </div>
 
-                  {/* Body */}
-                  {(step.method === "POST" ||
-                    step.method === "PUT" ||
-                    step.method === "PATCH") && (
+                    {/* Headers */}
                     <div>
                       <label className="text-[10px] text-gray-600 mb-1 block">
-                        Request Body (JSON)
+                        Headers
                       </label>
-                      <textarea
-                        className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-2 text-xs font-mono text-gray-200 outline-none focus:border-primary/50 resize-none"
-                        rows={3}
-                        placeholder='{"key": "value"}'
-                        value={step.body || ""}
-                        onChange={(e) =>
-                          updateStep(step.id, { body: e.target.value || null })
+                      {Object.entries(step.headers).map(([key, val], hi) => (
+                        <div key={hi} className="flex gap-1 mb-1">
+                          <input
+                            className="flex-1 bg-bg-700 border border-bg-500 rounded px-2 py-1 text-[11px] font-mono text-gray-300 outline-none focus:border-primary/50"
+                            value={key}
+                            placeholder="Key"
+                            onChange={(e) => {
+                              const newHeaders = { ...step.headers };
+                              delete newHeaders[key];
+                              newHeaders[e.target.value] = val;
+                              updateStep(step.id, { headers: newHeaders });
+                            }}
+                          />
+                          <input
+                            className="flex-1 bg-bg-700 border border-bg-500 rounded px-2 py-1 text-[11px] font-mono text-gray-300 outline-none focus:border-primary/50"
+                            value={val}
+                            placeholder="Value"
+                            onChange={(e) => {
+                              updateStep(step.id, {
+                                headers: {
+                                  ...step.headers,
+                                  [key]: e.target.value,
+                                },
+                              });
+                            }}
+                          />
+                          <button
+                            onClick={() => {
+                              const newHeaders = { ...step.headers };
+                              delete newHeaders[key];
+                              updateStep(step.id, { headers: newHeaders });
+                            }}
+                            className="text-gray-600 hover:text-red-400 w-5 flex items-center justify-center"
+                          >
+                            <IconX />
+                          </button>
+                        </div>
+                      ))}
+                      <button
+                        onClick={() =>
+                          updateStep(step.id, {
+                            headers: { ...step.headers, "": "" },
+                          })
                         }
-                      />
+                        className="text-[10px] text-gray-600 hover:text-primary transition-colors flex items-center gap-1 mt-1"
+                      >
+                        <IconPlus /> Add Header
+                      </button>
                     </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
 
-      {/* Run Summary Bar */}
-      {scenarioStatus !== "idle" && (
-        <div
-          className={`shrink-0 px-4 py-2 rounded-xl flex items-center justify-between ${
-            scenarioStatus === "passed"
-              ? "bg-success/10 border border-success/20"
-              : scenarioStatus === "failed"
-                ? "bg-danger/10 border border-danger/20"
-                : "bg-primary/10 border border-primary/20"
-          }`}
-        >
-          <div className="flex items-center gap-2">
-            {scenarioStatus === "running" && (
-              <span className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-            )}
-            {scenarioStatus === "passed" && (
-              <span className="text-success text-sm">✓</span>
-            )}
-            {scenarioStatus === "failed" && (
-              <span className="text-danger text-sm">✗</span>
-            )}
-            <span
-              className={`text-xs font-semibold ${
-                scenarioStatus === "passed"
-                  ? "text-success"
-                  : scenarioStatus === "failed"
-                    ? "text-danger"
-                    : "text-primary"
-              }`}
-            >
-              {scenarioStatus === "running"
-                ? "Running scenario..."
-                : scenarioStatus === "passed"
-                  ? "All Steps Passed"
-                  : "Scenario Failed"}
-            </span>
-            <span className="text-[10px] text-gray-500">
-              {runResults.filter((r) => r.status === "passed").length}/
-              {runResults.length} passed
-            </span>
-          </div>
-          <button
-            onClick={() => {
-              setRunResults([]);
-              setScenarioStatus("idle");
-            }}
-            className="text-[10px] text-gray-600 hover:text-gray-400"
-          >
-            ✕
-          </button>
+                    {/* VUs + Mode + Delay */}
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="text-[10px] text-gray-600 mb-1 block">
+                          Requests / VUs
+                        </label>
+                        <input
+                          type="number"
+                          className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-200 outline-none focus:border-primary/50"
+                          value={step.virtual_users}
+                          min={1}
+                          onChange={(e) =>
+                            updateStep(step.id, {
+                              virtual_users: parseInt(e.target.value) || 1,
+                            })
+                          }
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-[10px] text-gray-600 mb-1 block">
+                          Mode
+                        </label>
+                        <select
+                          className="w-full bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs text-gray-200"
+                          value={step.mode}
+                          onChange={(e) =>
+                            updateStep(step.id, {
+                              mode: e.target.value as TestMode,
+                            })
+                          }
+                        >
+                          <option value="burst">Burst</option>
+                          <option value="constant">Constant</option>
+                          <option value="ramp_up">Ramp Up</option>
+                          <option value="stress_test">Stress Test</option>
+                        </select>
+                      </div>
+                      <div className="flex-1">
+                        <label className="text-[10px] text-gray-600 mb-1 block">
+                          Delay After (ms)
+                        </label>
+                        <input
+                          type="number"
+                          className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-1.5 text-xs font-mono text-gray-200 outline-none focus:border-primary/50"
+                          value={step.think_time_ms}
+                          min={0}
+                          step={100}
+                          placeholder="0"
+                          onChange={(e) =>
+                            updateStep(step.id, {
+                              think_time_ms: parseInt(e.target.value) || 0,
+                            })
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    {/* Body */}
+                    {(step.method === "POST" ||
+                      step.method === "PUT" ||
+                      step.method === "PATCH") && (
+                      <div>
+                        <label className="text-[10px] text-gray-600 mb-1 block">
+                          Request Body (JSON)
+                        </label>
+                        <textarea
+                          className="w-full bg-bg-700 border border-bg-500 rounded-lg px-3 py-2 text-xs font-mono text-gray-200 outline-none focus:border-primary/50 resize-none"
+                          rows={3}
+                          placeholder='{"key": "value"}'
+                          value={step.body || ""}
+                          onChange={(e) =>
+                            updateStep(step.id, {
+                              body: e.target.value || null,
+                            })
+                          }
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
-      )}
+
+        {/* Summary bar (only when no split panel) */}
+        {scenarioStatus !== "idle" && Object.keys(stepResults).length === 0 && (
+          <div
+            className={`shrink-0 px-4 py-2 rounded-xl flex items-center justify-between ${
+              scenarioStatus === "passed"
+                ? "bg-success/10 border border-success/20"
+                : scenarioStatus === "failed"
+                  ? "bg-danger/10 border border-danger/20"
+                  : "bg-primary/10 border border-primary/20"
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              {scenarioStatus === "running" && (
+                <span className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+              )}
+              {scenarioStatus === "passed" && (
+                <span className="text-success text-sm">✓</span>
+              )}
+              {scenarioStatus === "failed" && (
+                <span className="text-danger text-sm">✗</span>
+              )}
+              <span
+                className={`text-xs font-semibold ${
+                  scenarioStatus === "passed"
+                    ? "text-success"
+                    : scenarioStatus === "failed"
+                      ? "text-danger"
+                      : "text-primary"
+                }`}
+              >
+                {scenarioStatus === "running"
+                  ? "Running scenario..."
+                  : scenarioStatus === "passed"
+                    ? "All Steps Passed"
+                    : "Scenario Failed"}
+              </span>
+              <span className="text-[10px] text-gray-500">
+                {runResults.filter((r) => r.status === "passed").length}/
+                {runResults.length} passed
+              </span>
+            </div>
+            <button
+              onClick={() => {
+                setRunResults([]);
+                setScenarioStatus("idle");
+              }}
+              className="text-[10px] text-gray-600 hover:text-gray-400"
+            >
+              ✕
+            </button>
+          </div>
+        )}
+
+        {/* Right: ResultsDashboard (split mode) */}
+        {Object.keys(stepResults).length > 0 && (
+          <div className="flex-1 overflow-y-auto rounded-xl border border-bg-600 bg-bg-800">
+            {selectedResultStepId && stepResults[selectedResultStepId] ? (
+              <div className="p-4">
+                <div className="flex items-center gap-2 mb-3 pb-3 border-b border-bg-600">
+                  <span
+                    className={`w-2.5 h-2.5 rounded-full ${
+                      steps.find((s) => s.id === selectedResultStepId)
+                        ?.status === "passed"
+                        ? "bg-success"
+                        : "bg-danger"
+                    }`}
+                  />
+                  <span className="text-sm font-medium text-gray-200">
+                    {steps.find((s) => s.id === selectedResultStepId)?.name}
+                  </span>
+                  <span className="text-[10px] text-gray-600 font-mono ml-auto">
+                    {steps.find((s) => s.id === selectedResultStepId)?.method}{" "}
+                    {steps.find((s) => s.id === selectedResultStepId)?.url}
+                  </span>
+                </div>
+                <ResultsDashboard result={stepResults[selectedResultStepId]} />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-full text-gray-600 text-xs">
+                ← Select a completed step to view results
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+      {/* close content wrapper */}
     </div>
   );
 }
