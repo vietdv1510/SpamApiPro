@@ -1046,158 +1046,56 @@ export function Scenarios() {
         })}
       </div>
 
-      {/* Run Results Panel */}
-      {runResults.length > 0 && (
-        <div className="shrink-0 bg-bg-800 border border-bg-600 rounded-xl overflow-hidden">
-          {/* Header with overall status */}
-          <div className="px-3 py-2 border-b border-bg-600 flex justify-between items-center">
-            <div className="flex items-center gap-2">
-              {scenarioStatus === "running" && (
-                <span className="w-2 h-2 bg-primary rounded-full animate-pulse" />
-              )}
-              {scenarioStatus === "passed" && (
-                <svg
-                  className="w-4 h-4 text-success"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              )}
-              {scenarioStatus === "failed" && (
-                <svg
-                  className="w-4 h-4 text-danger"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <circle cx="12" cy="12" r="10" />
-                  <line x1="15" y1="9" x2="9" y2="15" />
-                  <line x1="9" y1="9" x2="15" y2="15" />
-                </svg>
-              )}
-              <span
-                className={`text-xs font-bold ${
-                  scenarioStatus === "passed"
-                    ? "text-success"
-                    : scenarioStatus === "failed"
-                      ? "text-danger"
-                      : scenarioStatus === "running"
-                        ? "text-primary"
-                        : "text-gray-400"
-                }`}
-              >
-                {scenarioStatus === "running"
-                  ? "Running..."
-                  : scenarioStatus === "passed"
-                    ? "All Steps Passed"
-                    : scenarioStatus === "failed"
-                      ? "Scenario Failed"
-                      : "Results"}
-              </span>
-              <span className="text-[10px] text-gray-600">
-                {runResults.filter((r) => r.status === "passed").length}/
-                {runResults.length} passed
-              </span>
-            </div>
-            <button
-              onClick={() => {
-                setRunResults([]);
-                setRunLog([]);
-                setScenarioStatus("idle");
-              }}
-              className="text-[10px] text-gray-700 hover:text-gray-400"
+      {/* Run Summary Bar */}
+      {scenarioStatus !== "idle" && (
+        <div
+          className={`shrink-0 px-4 py-2 rounded-xl flex items-center justify-between ${
+            scenarioStatus === "passed"
+              ? "bg-success/10 border border-success/20"
+              : scenarioStatus === "failed"
+                ? "bg-danger/10 border border-danger/20"
+                : "bg-primary/10 border border-primary/20"
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {scenarioStatus === "running" && (
+              <span className="w-2 h-2 bg-primary rounded-full animate-pulse" />
+            )}
+            {scenarioStatus === "passed" && (
+              <span className="text-success text-sm">✓</span>
+            )}
+            {scenarioStatus === "failed" && (
+              <span className="text-danger text-sm">✗</span>
+            )}
+            <span
+              className={`text-xs font-semibold ${
+                scenarioStatus === "passed"
+                  ? "text-success"
+                  : scenarioStatus === "failed"
+                    ? "text-danger"
+                    : "text-primary"
+              }`}
             >
-              Clear
-            </button>
+              {scenarioStatus === "running"
+                ? "Running scenario..."
+                : scenarioStatus === "passed"
+                  ? "All Steps Passed"
+                  : "Scenario Failed"}
+            </span>
+            <span className="text-[10px] text-gray-500">
+              {runResults.filter((r) => r.status === "passed").length}/
+              {runResults.length} passed
+            </span>
           </div>
-
-          {/* Step results */}
-          <div className="max-h-44 overflow-y-auto">
-            {runResults.map((r, i) => (
-              <div
-                key={i}
-                className={`px-3 py-2 flex items-center gap-3 border-b border-bg-700/50 last:border-0 ${
-                  r.status === "running" ? "bg-primary/5" : ""
-                }`}
-              >
-                {/* Status dot */}
-                <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${
-                    r.status === "running"
-                      ? "bg-primary animate-pulse"
-                      : r.status === "passed"
-                        ? "bg-success"
-                        : r.status === "failed"
-                          ? "bg-danger"
-                          : "bg-gray-600"
-                  }`}
-                />
-
-                {/* Step info */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-gray-600">[{i + 1}]</span>
-                    <span className="text-xs text-gray-300 truncate">
-                      {r.stepName}
-                    </span>
-                    <span className="text-[9px] font-mono text-gray-600 shrink-0">
-                      {r.method}
-                    </span>
-                  </div>
-                  {r.error && (
-                    <p className="text-[10px] text-danger/70 truncate mt-0.5">
-                      {r.error}
-                    </p>
-                  )}
-                </div>
-
-                {/* Metrics */}
-                {r.successRate !== undefined && (
-                  <div className="flex items-center gap-3 shrink-0">
-                    <div className="flex items-center gap-1.5">
-                      <div className="w-16 h-1.5 bg-bg-700 rounded-full overflow-hidden">
-                        <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            r.successRate >= 95
-                              ? "bg-success"
-                              : r.successRate >= 50
-                                ? "bg-warning"
-                                : "bg-danger"
-                          }`}
-                          style={{ width: `${r.successRate}%` }}
-                        />
-                      </div>
-                      <span
-                        className={`text-[10px] font-mono font-bold w-8 text-right ${
-                          r.successRate >= 95
-                            ? "text-success"
-                            : r.successRate >= 50
-                              ? "text-warning"
-                              : "text-danger"
-                        }`}
-                      >
-                        {r.successRate.toFixed(0)}%
-                      </span>
-                    </div>
-                    <span className="text-[10px] font-mono text-gray-500 w-14 text-right">
-                      {r.rps?.toFixed(0)} RPS
-                    </span>
-                    <span className="text-[10px] font-mono text-gray-600 w-16 text-right">
-                      P95: {r.p95?.toFixed(0)}ms
-                    </span>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
+          <button
+            onClick={() => {
+              setRunResults([]);
+              setScenarioStatus("idle");
+            }}
+            className="text-[10px] text-gray-600 hover:text-gray-400"
+          >
+            ✕
+          </button>
         </div>
       )}
     </div>
