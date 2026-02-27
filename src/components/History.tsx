@@ -1,15 +1,27 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useAppStore } from "../store";
 import { deleteHistoryEntry, clearAllHistory } from "../tauri";
 import { loadHistoryFromDB } from "../hooks/useTestRunner";
 
 export function History() {
   const { history } = useAppStore();
+  const [loading, setLoading] = useState(true);
 
   // Load history từ SQLite khi mount
   useEffect(() => {
-    loadHistoryFromDB();
+    setLoading(true);
+    loadHistoryFromDB().finally(() => setLoading(false));
   }, []);
+
+  // Loading state
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full gap-2 text-gray-500 text-sm">
+        <span className="w-4 h-4 border-2 border-gray-600 border-t-primary rounded-full animate-spin" />
+        Loading history…
+      </div>
+    );
+  }
 
   if (history.length === 0) {
     return (
@@ -45,6 +57,17 @@ export function History() {
     }
   };
 
+  /** Reuse Config — nạp lại config từ history vào form để chạy lại */
+  const handleReuseConfig = (
+    entry: (typeof history)[0],
+    e: React.MouseEvent,
+  ) => {
+    e.stopPropagation();
+    const store = useAppStore.getState();
+    store.applyParsedConfig(entry.config);
+    store.setActiveTab("test");
+  };
+
   return (
     <div className="overflow-y-auto h-full space-y-2">
       {/* Header with clear button */}
@@ -75,16 +98,25 @@ export function History() {
               store.setActiveTab("results");
             }}
           >
-            {/* Delete button */}
-            <button
-              onClick={(e) => handleDelete(entry.id, e)}
-              className="absolute top-2 right-2 text-gray-700 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all text-xs p-1 rounded hover:bg-red-500/10"
-              title="Delete"
-            >
-              ✕
-            </button>
+            {/* Action buttons — hover visible */}
+            <div className="absolute top-2 right-2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all">
+              <button
+                onClick={(e) => handleReuseConfig(entry, e)}
+                className="text-primary hover:text-white text-[10px] px-2 py-1 rounded bg-primary/10 hover:bg-primary/20 transition-colors font-medium"
+                title="Load this config into the editor"
+              >
+                🔄 Reuse
+              </button>
+              <button
+                onClick={(e) => handleDelete(entry.id, e)}
+                className="text-gray-700 hover:text-red-400 text-xs p-1 rounded hover:bg-red-500/10 transition-colors"
+                title="Delete"
+              >
+                ✕
+              </button>
+            </div>
 
-            <div className="flex justify-between items-start pr-6">
+            <div className="flex justify-between items-start pr-20">
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">
@@ -130,6 +162,7 @@ export function History() {
               <span>P50: {r.latency_p50_ms.toFixed(1)}ms</span>
               <span>P95: {r.latency_p95_ms.toFixed(1)}ms</span>
               <span>P99: {r.latency_p99_ms.toFixed(1)}ms</span>
+              <span>Duration: {(r.total_duration_ms / 1000).toFixed(2)}s</span>
             </div>
           </div>
         );

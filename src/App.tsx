@@ -4,12 +4,14 @@ import { TestConfig } from "./components/TestConfig";
 import { LiveMonitor } from "./components/LiveMonitor";
 import { ResultsDashboard } from "./components/ResultsDashboard";
 import { History } from "./components/History";
+import { Scenarios } from "./components/Scenarios";
 import { useAppStore } from "./store";
 
 const TABS = [
   { id: "test", label: "Test" },
   { id: "results", label: "Results" },
   { id: "history", label: "History" },
+  { id: "scenarios", label: "Scenarios" },
 ] as const;
 
 const MIN_PANEL_WIDTH = 280;
@@ -171,6 +173,7 @@ function App() {
             {activeTab === "test" && <LiveMonitor />}
             {activeTab === "results" && <ResultsDashboard />}
             {activeTab === "history" && <History />}
+            {activeTab === "scenarios" && <Scenarios />}
           </div>
         </div>
       </div>

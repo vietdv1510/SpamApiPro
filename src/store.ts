@@ -58,7 +58,7 @@ export interface TestResult {
   was_cancelled: boolean;
 }
 
-export type AppTab = "test" | "results" | "history";
+export type AppTab = "test" | "results" | "history" | "scenarios";
 export type RunStatus =
   | "idle"
   | "running"
