@@ -32,6 +32,9 @@ parking_lot = "0.12"
 tokio-util = { version = "0.7", features = ["rt"] }
 bytes = "1.11.1"
 
+# Error Reporting - Mắt thần Sentry
+sentry = { version = "0.34", features = ["tokio"] }
+
 
 
 [profile.release]
