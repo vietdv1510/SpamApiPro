@@ -431,6 +431,26 @@ export function ScenarioStepCard({
                 }
               />
             </div>
+            <div className="w-24">
+              <label className="text-[10px] text-gray-600 mb-1 block">
+                Retry on Fail
+              </label>
+              <select
+                className="w-full bg-bg-700 border border-bg-500 rounded-lg px-2 py-1.5 text-xs text-gray-200 outline-none focus:border-primary/50"
+                value={step.retry ?? 0}
+                onChange={(e) =>
+                  onUpdate(step.id, {
+                    retry: parseInt(e.target.value),
+                  })
+                }
+              >
+                <option value={0}>No retry</option>
+                <option value={1}>1×</option>
+                <option value={2}>2×</option>
+                <option value={3}>3×</option>
+                <option value={5}>5×</option>
+              </select>
+            </div>
           </div>
 
           {/* Body */}

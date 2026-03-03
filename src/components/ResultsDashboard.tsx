@@ -159,10 +159,36 @@ export function ResultsDashboard({ result }: { result?: TestResult }) {
   const tooltipLabelStyle = { color: "#9CA3AF", marginBottom: 4 };
   const tooltipItemStyle = { color: "#E5E7EB" };
 
+  const exportChartPng = async () => {
+    const el = document.getElementById("results-charts-section");
+    if (!el) return;
+    try {
+      // Dynamic import — chỉ load khi user click, không ảnh hưởng initial bundle
+      const html2canvas = (await import("html2canvas")).default;
+      const canvas = await html2canvas(el, {
+        backgroundColor: "#0D0D14",
+        scale: 2,
+        logging: false,
+      });
+      const link = document.createElement("a");
+      link.download = `spamapi-chart-${Date.now()}.png`;
+      link.href = canvas.toDataURL("image/png");
+      link.click();
+    } catch (e) {
+      console.error("Chart export failed:", e);
+    }
+  };
+
   return (
     <div className="overflow-y-auto h-full space-y-4 pr-1">
-      {/* Export Button */}
-      <div className="flex justify-end">
+      {/* Export Buttons */}
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={exportChartPng}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-bg-700 text-gray-400 border border-bg-500 hover:bg-bg-600 hover:text-gray-200 transition-colors"
+        >
+          📷 Chart PNG
+        </button>
         <button
           onClick={() =>
             exportReportHTML(r, {
@@ -176,6 +202,7 @@ export function ResultsDashboard({ result }: { result?: TestResult }) {
           📄 Export Report
         </button>
       </div>
+
       {/* Cancelled Banner */}
       {r.was_cancelled && (
         <div className="bg-amber-500/10 border border-amber-500/40 rounded-xl px-4 py-3 flex items-center gap-2 slide-in">
@@ -258,7 +285,7 @@ export function ResultsDashboard({ result }: { result?: TestResult }) {
       </div>
 
       {/* Charts Row */}
-      <div className="grid grid-cols-2 gap-3">
+      <div id="results-charts-section" className="grid grid-cols-2 gap-3">
         {/* Latency Distribution */}
         <div className="bg-bg-800 border border-bg-600 rounded-xl p-3 min-w-0">
           <h3 className="text-xs uppercase tracking-wider text-gray-500 mb-3 font-semibold">
