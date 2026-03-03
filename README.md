@@ -1,40 +1,40 @@
 # SpamAPI Pro
 
-> **Native macOS load testing tool** — built for engineers who need to find race conditions, stress-test APIs, and measure real latency without cloud dependencies.
+> **Công cụ load testing native cho macOS** — dành cho developers cần tìm race conditions, stress-test API và đo latency thực tế mà không phụ thuộc cloud.
 
 ![CI](https://github.com/vietdv1510/SpamApiPro/actions/workflows/ci.yml/badge.svg)
 
 ---
 
-## ✨ Features
+## ✨ Tính năng
 
-### Core Testing
+### Test cơ bản
 
-| Feature              | Description                                               |
-| -------------------- | --------------------------------------------------------- |
-| **Burst Mode**       | Fire N requests simultaneously — race condition detection |
-| **Constant Mode**    | Sustained load with configurable virtual users            |
-| **Ramp-up Mode**     | Gradually increase load to find breaking points           |
-| **Stress Test Mode** | Continuous escalation until failure                       |
+| Tính năng            | Mô tả                                                  |
+| -------------------- | ------------------------------------------------------ |
+| **Burst Mode**       | Bắn N requests đồng thời — phát hiện race condition    |
+| **Constant Mode**    | Duy trì tải ổn định với số virtual users cấu hình được |
+| **Ramp-up Mode**     | Tăng dần tải để tìm điểm giới hạn                      |
+| **Stress Test Mode** | Leo thang liên tục đến khi server sập                  |
 
-### Advanced
+### Nâng cao
 
-- **🔀 Race Condition Detection** — identify double-spend / duplicate write bugs automatically
-- **📊 Real-time Metrics** — P50/P90/P95/P99/P99.9 latency, RPS, status distribution
-- **🔗 Multi-step Flows (Scenarios)** — chain requests with variable extraction (`{{step.response.id}}`)
-- **🔁 Step Retry** — configurable retry (1×/2×/3×/5×) per scenario step
-- **💉 Built-in Variables** — `{{$uuid}}`, `{{$timestamp}}`, `{{$random_int:1:100}}`, `{{$random_str:8}}`, `{{$random_email}}`
-- **🔐 Auth Profiles** — save and reuse Bearer / API Key / Basic Auth configurations
-- **📦 Presets** — save full test configurations for quick reuse
-- **📤 Export** — results as JSON, CSV, or HTML report; charts as PNG
-- **⚖️ Compare Runs** — side-by-side delta comparison between two test runs
-- **📜 History** — persistent SQLite-backed test history
+- **🔀 Phát hiện Race Condition** — tự động phát hiện bug double-spend / duplicate write
+- **📊 Metrics thời gian thực** — P50/P90/P95/P99/P99.9 latency, RPS, phân phối status code
+- **🔗 Multi-step Flows (Scenarios)** — chuỗi requests với trích xuất biến (`{{step.response.id}}`)
+- **🔁 Retry cho từng bước** — cấu hình retry (1×/2×/3×/5×) mỗi bước trong scenario
+- **💉 Biến có sẵn** — `{{$uuid}}`, `{{$timestamp}}`, `{{$random_int:1:100}}`, `{{$random_str:8}}`, `{{$random_email}}`
+- **🔐 Auth Profiles** — lưu và tái sử dụng Bearer / API Key / Basic Auth
+- **📦 Presets** — lưu toàn bộ cấu hình test để dùng lại nhanh
+- **📤 Export** — kết quả dưới dạng JSON, CSV, HTML report; biểu đồ dưới dạng PNG
+- **⚖️ So sánh Runs** — so sánh 2 lần chạy cạnh nhau với delta màu sắc
+- **📜 Lịch sử** — lưu trữ lịch sử test bằng SQLite
 
 ---
 
 ## 🖥️ Tech Stack
 
-| Layer        | Tech                                                |
+| Tầng         | Công nghệ                                           |
 | ------------ | --------------------------------------------------- |
 | **Desktop**  | [Tauri 2](https://tauri.app) (Rust + WebView)       |
 | **Engine**   | Rust — `tokio` async runtime, `reqwest` HTTP client |
@@ -45,15 +45,15 @@
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Bắt đầu
 
-### Prerequisites
+### Yêu cầu
 
 - [Node.js](https://nodejs.org) 20+
 - [Rust](https://rustup.rs) stable
-- macOS 12+ (Apple Silicon or Intel)
+- macOS 12+ (Apple Silicon hoặc Intel)
 
-### Development
+### Chạy môi trường dev
 
 ```bash
 git clone https://github.com/vietdv1510/SpamApiPro.git
@@ -62,7 +62,7 @@ npm install
 npm run tauri dev
 ```
 
-### Production Build
+### Build production
 
 ```bash
 npm run tauri build
@@ -71,75 +71,75 @@ npm run tauri build
 # src-tauri/target/release/bundle/dmg/SpamAPI Pro_0.1.0_aarch64.dmg
 ```
 
-Or download the latest `.dmg` from [GitHub Actions artifacts](https://github.com/vietdv1510/SpamApiPro/actions).
+Hoặc tải bản build mới nhất từ [GitHub Actions artifacts](https://github.com/vietdv1510/SpamApiPro/actions).
 
 ---
 
-## 🧪 Testing
+## 🧪 Chạy test
 
 ```bash
 # Rust unit tests (16 tests)
 cd src-tauri && cargo test
 
-# TypeScript check
+# Kiểm tra TypeScript
 npx tsc --noEmit
 
-# Full production build validation
+# Kiểm tra build production
 npm run build
 ```
 
 ---
 
-## 📖 Usage
+## 📖 Hướng dẫn sử dụng
 
-### Quick Load Test
+### Load Test nhanh
 
-1. Enter URL + select HTTP method
-2. Choose test mode and virtual users
-3. Click **Run** — results appear in real-time
+1. Nhập URL + chọn HTTP method
+2. Chọn chế độ test và số virtual users
+3. Click **Run** — kết quả hiện theo thời gian thực
 
-### Scenario (Multi-step Flow)
+### Scenario (Chuỗi nhiều bước)
 
-1. Go to **Scenarios** tab
-2. Add steps → configure URL, method, body
-3. Use `{{step_name.response.field}}` to pass data between steps
-4. Set retry count per step for resilience testing
+1. Vào tab **Scenarios**
+2. Thêm bước → cấu hình URL, method, body
+3. Dùng `{{tên_bước.response.field}}` để truyền dữ liệu giữa các bước
+4. Đặt retry count mỗi bước để test khả năng chịu lỗi
 
 ### Auth Profiles
 
-Click **🔐 Auth** in the Headers section → save Bearer/API Key/Basic Auth → apply to any test in one click.
+Click **🔐 Auth** trong phần Headers → lưu Bearer/API Key/Basic Auth → apply vào bất kỳ test nào chỉ 1 click.
 
-### Compare Runs
+### So sánh Runs
 
-In **History** tab → click **⚖️ Compare** → select two runs → view delta table with color-coded improvements/regressions.
+Trong tab **History** → click **⚖️ Compare** → chọn 2 runs → xem bảng delta với màu xanh/đỏ thể hiện cải thiện/hồi quy.
 
 ---
 
-## 🏗️ Architecture
+## 🏗️ Cấu trúc dự án
 
 ```
 SpamApiPro/
-├── src/                    # React frontend
-│   ├── components/         # UI components
+├── src/                    # Frontend React
+│   ├── components/         # Các UI component
 │   ├── hooks/              # useTestRunner, useScenarioRunner
 │   ├── utils/              # exportResults, authProfiles, presets
-│   └── store.ts            # Zustand global state
-├── src-tauri/              # Rust backend
+│   └── store.ts            # Global state với Zustand
+├── src-tauri/              # Backend Rust
 │   └── src/
-│       ├── engine.rs       # Core load testing engine
+│       ├── engine.rs       # Engine load testing cốt lõi
 │       ├── commands.rs     # Tauri IPC commands
-│       ├── db.rs           # SQLite persistence
+│       ├── db.rs           # Lưu trữ SQLite
 │       └── tests/          # Unit tests
-└── .github/workflows/      # CI/CD — tests + DMG build
+└── .github/workflows/      # CI/CD — chạy test + build DMG tự động
 ```
 
 ---
 
-## 🔒 Security
+## 🔒 Bảo mật
 
-- Requests run **fully local** — no cloud, no telemetry (except opt-in Sentry error reporting)
-- SSL verification enabled by default
-- Tauri CSP configured; `shell.open` restricted to `http/https`
+- Mọi request chạy **hoàn toàn local** — không cloud, không telemetry (trừ Sentry error reporting nếu bật)
+- SSL verification bật mặc định
+- Tauri CSP được cấu hình; `shell.open` chỉ cho phép `http/https`
 
 ---
 
