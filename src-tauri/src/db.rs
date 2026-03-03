@@ -79,7 +79,7 @@ impl Database {
         // ⚡ Fix 3.2: VACUUM khi khởi động để thu hồi dung lượng từ các row đã xoá
         let _ = conn.execute_batch("VACUUM;");
 
-        eprintln!("📦 [DB] SQLite opened at {:?}", db_path);
+        log::debug!("📦 [DB] SQLite opened at {:?}", db_path);
         Ok(Self {
             conn: Arc::new(Mutex::new(conn)),
         })

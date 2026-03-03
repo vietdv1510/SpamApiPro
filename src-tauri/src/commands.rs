@@ -28,7 +28,7 @@ pub async fn run_load_test(
     state: State<'_, AppState>,
     config: TestConfig,
 ) -> Result<TestResult, String> {
-    eprintln!("🟢 [CMD] run_load_test called: {} VUs, mode={:?}, url={}", config.virtual_users, config.mode, config.url);
+    log::debug!("🟢 [CMD] run_load_test called: {} VUs, mode={:?}, url={}", config.virtual_users, config.mode, config.url);
 
     // ── Input validation ──
     if config.virtual_users == 0 || config.virtual_users > 10_000 {
@@ -49,7 +49,7 @@ pub async fn run_load_test(
     {
         let old_token = state.cancel_token.lock().clone();
         if let Some(old_cancel) = old_token {
-            eprintln!("🔄 [CMD] Cancelling previous run...");
+            log::debug!("🔄 [CMD] Cancelling previous run...");
             old_cancel.cancel();
             // Emit event để Frontend biết test cũ bị huỷ (tránh ghost 'Running' state)
             let _ = app.emit("test_force_cancelled", serde_json::json!({
@@ -72,7 +72,7 @@ pub async fn run_load_test(
 
     // ⚡ Global timeout = timeout_ms * 2 + 30s (warm-up buffer)
     let global_timeout_ms = (config.timeout_ms * 2) + 30_000;
-    eprintln!("⏱️ [CMD] Global timeout: {}ms", global_timeout_ms);
+    log::debug!("⏱️ [CMD] Global timeout: {}ms", global_timeout_ms);
 
     let engine_future = engine
         .run(config, cancel_clone, move |progress, req_result| {
@@ -90,11 +90,11 @@ pub async fn run_load_test(
         engine_future,
     ).await {
         Ok(result) => {
-            eprintln!("✅ [CMD] Engine completed normally");
+            log::debug!("✅ [CMD] Engine completed normally");
             result
         }
         Err(_) => {
-            eprintln!("⏰ [CMD] GLOBAL TIMEOUT! Force-returning empty result");
+            log::debug!("⏰ [CMD] GLOBAL TIMEOUT! Force-returning empty result");
             cancel.cancel();
             TestResult {
                 total_requests: 0,
@@ -130,7 +130,7 @@ pub async fn run_load_test(
         *token_lock = None;
     }
 
-    eprintln!("🏁 [CMD] Returning result to frontend");
+    log::debug!("🏁 [CMD] Returning result to frontend");
     Ok(result)
 }
 

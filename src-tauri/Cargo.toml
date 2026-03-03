@@ -34,7 +34,9 @@ bytes = "1.11.1"
 
 # Error Reporting - Mắt thần Sentry
 sentry = { version = "0.34", features = ["tokio"] }
-
+# Logging — zero-cost trong release, bật bằng RUST_LOG=debug
+log = "0.4"
+env_logger = "0.11"
 
 
 [profile.release]

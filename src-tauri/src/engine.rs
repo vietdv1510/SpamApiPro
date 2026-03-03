@@ -330,17 +330,14 @@ impl LoadTestEngine {
         let warmup_count = n.min(MAX_WARMUP_CONNECTIONS);
         let (warmup_time, warmup_ok) =
             self.warm_up_connections(&config.url, warmup_count, &cancel).await;
-        eprintln!(
-            "🔥 Warmed up {}/{} connections in {:?}",
-            warmup_ok, warmup_count, warmup_time
-        );
+        log::debug!("warmed up {}/{} connections in {:?}", warmup_ok, warmup_count, warmup_time);
 
         if cancel.is_cancelled() {
             return Self::empty_result(true);
         }
 
         // ── PHASE 2: PRE-BUILD ALL REQUESTS ──
-        eprintln!("📋 [BURST] Phase 2: Pre-building {} requests...", n);
+        log::debug!("📋 [BURST] Phase 2: Pre-building {} requests...", n);
         let callback = Arc::new(progress_callback);
         let completed = Arc::new(AtomicU32::new(0));
         let cancelled_count = Arc::new(AtomicU32::new(0));
@@ -386,7 +383,7 @@ impl LoadTestEngine {
             }
         }
 
-        eprintln!("📋 [BURST] Pre-built {}/{} requests ({} failures)", pre_built.len(), n, build_failures);
+        log::debug!("📋 [BURST] Pre-built {}/{} requests ({} failures)", pre_built.len(), n, build_failures);
 
         // Barrier chỉ đếm số request build thành công
         let burst_count = pre_built.len();
@@ -394,7 +391,7 @@ impl LoadTestEngine {
             return self.aggregate_results(vec![], 0.0);
         }
 
-        eprintln!("🚀 [BURST] Phase 3: Spawning {} tasks with barrier...", burst_count);
+        log::debug!("🚀 [BURST] Phase 3: Spawning {} tasks with barrier...", burst_count);
         let barrier = Arc::new(Barrier::new(burst_count));
         let results = Arc::new(Mutex::new(Vec::with_capacity(burst_count)));
         let dispatch_nanos: Arc<Vec<AtomicU64>> =
@@ -531,7 +528,7 @@ impl LoadTestEngine {
             let _ = handle.await;
         }
 
-        eprintln!("✅ [BURST] All handles completed. Aggregating...");
+        log::debug!("✅ [BURST] All handles completed. Aggregating...");
         let total_duration_ms = global_start.elapsed().as_secs_f64() * 1000.0;
         let was_cancelled = cancel.is_cancelled();
 
@@ -658,7 +655,7 @@ impl LoadTestEngine {
         for step in 0..steps {
             if cancel.is_cancelled() { break; }
             let current_users = (users_per_step * (step as usize + 1)).min(max_users);
-            eprintln!("📈 Ramp step {}/{}: {} concurrent users", step + 1, steps, current_users);
+            log::debug!("📈 Ramp step {}/{}: {} concurrent users", step + 1, steps, current_users);
             
             let step_start = Instant::now();
             let semaphore = Arc::new(tokio::sync::Semaphore::new(current_users));
@@ -731,7 +728,7 @@ impl LoadTestEngine {
 
         loop {
             if cancel.is_cancelled() { break; }
-            eprintln!("🔥 Stress wave: {} concurrent users", current_users);
+            log::debug!("🔥 Stress wave: {} concurrent users", current_users);
             let wave_start = Instant::now();
             let semaphore = Arc::new(tokio::sync::Semaphore::new(current_users));
             let mut wave_results = 0;
@@ -770,7 +767,7 @@ impl LoadTestEngine {
             
             // Nếu lỗi > 30% or users > 10k -> Dừng
             if wave_results > 0 && (wave_errors as f32 / wave_results as f32) > 0.3 {
-                eprintln!("🛑 Stress limit reached at {} users", current_users);
+                log::debug!("🛑 Stress limit reached at {} users", current_users);
                 break;
             }
             if current_users >= 10000 { break; }
