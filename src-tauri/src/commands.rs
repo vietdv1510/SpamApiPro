@@ -30,6 +30,21 @@ pub async fn run_load_test(
 ) -> Result<TestResult, String> {
     eprintln!("🟢 [CMD] run_load_test called: {} VUs, mode={:?}, url={}", config.virtual_users, config.mode, config.url);
 
+    // ── Input validation ──
+    if config.virtual_users == 0 || config.virtual_users > 10_000 {
+        return Err("virtual_users must be between 1 and 10,000".to_string());
+    }
+    if !config.url.starts_with("http://") && !config.url.starts_with("https://") {
+        return Err("Only HTTP/HTTPS URLs are supported".to_string());
+    }
+    if config.url.trim().is_empty() {
+        return Err("URL cannot be empty".to_string());
+    }
+    if config.timeout_ms < 100 || config.timeout_ms > 300_000 {
+        return Err("timeout_ms must be between 100ms and 300,000ms (5 min)".to_string());
+    }
+
+
     // ⚡ CRITICAL: Cancel bất kỳ test nào đang chạy trước đó + emit event cho Frontend
     {
         let old_token = state.cancel_token.lock().clone();

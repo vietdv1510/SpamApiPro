@@ -201,6 +201,118 @@ impl LoadTestEngine {
         }
     }
 
+    /// ⭐ SHARED: Build + execute 1 request, cancel-aware, body preview included.
+    /// Tất cả 4 test modes đều gọi vào đây — không copy-paste nữa.
+    async fn execute_single_request(
+        client: &reqwest::Client,
+        config: &TestConfig,
+        body_bytes: &Option<bytes::Bytes>,
+        id: u32,
+        cancel: &CancellationToken,
+    ) -> RequestResult {
+        let now_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis() as u64;
+
+        // Build request
+        let mut builder = match config.method.to_uppercase().as_str() {
+            "GET"    => client.get(&config.url),
+            "POST"   => client.post(&config.url),
+            "PUT"    => client.put(&config.url),
+            "DELETE" => client.delete(&config.url),
+            "PATCH"  => client.patch(&config.url),
+            _        => client.get(&config.url),
+        };
+        for (key, value) in &config.headers {
+            builder = builder.header(key, value);
+        }
+        if let Some(b) = body_bytes {
+            builder = builder.body(b.clone());
+        }
+
+        let request = match builder.build() {
+            Ok(r) => r,
+            Err(e) => {
+                return RequestResult {
+                    id,
+                    success: false,
+                    status_code: None,
+                    latency_ms: 0.0,
+                    error: Some(format!("Request build error: {}", e)),
+                    response_size_bytes: 0,
+                    timestamp_ms: now_epoch,
+                    response_body: None,
+                };
+            }
+        };
+
+        let start = Instant::now();
+
+        // Cancel-aware execute
+        let resp = tokio::select! {
+            biased;
+            _ = cancel.cancelled() => {
+                return RequestResult {
+                    id,
+                    success: false,
+                    status_code: None,
+                    latency_ms: start.elapsed().as_secs_f64() * 1000.0,
+                    error: Some("Cancelled".to_string()),
+                    response_size_bytes: 0,
+                    timestamp_ms: now_epoch,
+                    response_body: None,
+                };
+            }
+            r = client.execute(request) => r,
+        };
+
+        match resp {
+            Err(e) => RequestResult {
+                id,
+                success: false,
+                status_code: None,
+                latency_ms: start.elapsed().as_secs_f64() * 1000.0,
+                error: Some(classify_error(&e)),
+                response_size_bytes: 0,
+                timestamp_ms: now_epoch,
+                response_body: None,
+            },
+            Ok(response) => {
+                let status = response.status().as_u16();
+                let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+                let success = status >= 200 && status < 300;
+
+                // Cancel-aware body read
+                let body_bytes = tokio::select! {
+                    biased;
+                    _ = cancel.cancelled() => bytes::Bytes::new(),
+                    b = response.bytes() => b.unwrap_or_default(),
+                };
+
+                let body_preview = if body_bytes.is_empty() {
+                    None
+                } else {
+                    let cap = body_bytes.len().min(BODY_PREVIEW_BYTES);
+                    Some(String::from_utf8_lossy(&body_bytes[..cap]).into_owned())
+                };
+
+                RequestResult {
+                    id,
+                    success,
+                    status_code: Some(status),
+                    latency_ms,
+                    error: if success { None } else { Some(format!("HTTP {}", status)) },
+                    response_size_bytes: body_bytes.len(),
+                    timestamp_ms: now_epoch,
+                    response_body: body_preview,
+                }
+            }
+        }
+    }
+
+
+
     /// ⭐ BURST MODE với Cancel support
     pub async fn run_burst(
         &self,
@@ -493,108 +605,12 @@ impl LoadTestEngine {
 
             let handle = tokio::spawn(async move {
                 let _permit = permit;
-                let start = Instant::now();
-                let now_epoch = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_millis() as u64;
-
-                let mut builder = match config.method.to_uppercase().as_str() {
-                    "GET" => client.get(&config.url),
-                    "POST" => client.post(&config.url),
-                    "PUT" => client.put(&config.url),
-                    "DELETE" => client.delete(&config.url),
-                    "PATCH" => client.patch(&config.url),
-                    _ => client.get(&config.url),
-                };
-                for (key, value) in &config.headers {
-                    builder = builder.header(key, value);
+                let result = LoadTestEngine::execute_single_request(
+                    &client, &config, &body_bytes, id, &cancel,
+                ).await;
+                if result.error.as_deref() == Some("Cancelled") {
+                    cancelled_count.fetch_add(1, Ordering::Relaxed);
                 }
-                if let Some(b) = &body_bytes {
-                    builder = builder.body(b.clone());
-                }
-
-                let request = match builder.build() {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let res = RequestResult {
-                            id,
-                            success: false,
-                            status_code: None,
-                            latency_ms: 0.0,
-                            error: Some(format!("Request build error: {}", e)),
-                            response_size_bytes: 0,
-                            timestamp_ms: now_epoch,
-                            response_body: None,
-                        };
-                        results.lock().push(res.clone());
-                        callback(0.0, res); // We don't know progress easily here, just pass 0
-                        return;
-                    }
-                };
-
-                let result = tokio::select! {
-                    biased;
-                    _ = cancel.cancelled() => {
-                        cancelled_count.fetch_add(1, Ordering::Relaxed);
-                        RequestResult {
-                            id,
-                            success: false,
-                            status_code: None,
-                            latency_ms: start.elapsed().as_secs_f64() * 1000.0,
-                            error: Some("Cancelled".to_string()),
-                            response_size_bytes: 0,
-                            timestamp_ms: now_epoch,
-                            response_body: None,
-                        }
-                    }
-                    resp = client.execute(request) => {
-                        match resp {
-                            Ok(response) => {
-                                let status = response.status().as_u16();
-                                let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
-                                
-                                // CANCEL-AWARE READ BODY
-                                let body_bytes = tokio::select! {
-                                    biased;
-                                    _ = cancel.cancelled() => {
-                                        cancelled_count.fetch_add(1, Ordering::Relaxed);
-                                        return;
-                                    }
-                                    b = response.bytes() => b.unwrap_or_default()
-                                };
-                                
-                                let success = status >= 200 && status < 300;
-                                RequestResult {
-                                    id,
-                                    success,
-                                    status_code: Some(status),
-                                    latency_ms,
-                                    error: if success { None } else { Some(format!("HTTP {}", status)) },
-                                    response_size_bytes: body_bytes.len(),
-                                    timestamp_ms: now_epoch,
-                                    response_body: if body_bytes.is_empty() { None } else {
-                                        let cap = body_bytes.len().min(BODY_PREVIEW_BYTES);
-                                        Some(String::from_utf8_lossy(&body_bytes[..cap]).into_owned())
-                                    },
-                                }
-                            }
-                            Err(e) => {
-                                RequestResult {
-                                    id,
-                                    success: false,
-                                    status_code: None,
-                                    latency_ms: start.elapsed().as_secs_f64() * 1000.0,
-                                    error: Some(classify_error(&e)),
-                                    response_size_bytes: 0,
-                                    timestamp_ms: now_epoch,
-                                    response_body: None,
-                                }
-                            }
-                        }
-                    }
-                };
-
                 callback(0.0, result.clone());
                 results.lock().push(result);
             });
@@ -670,85 +686,12 @@ impl LoadTestEngine {
 
                 let handle = tokio::spawn(async move {
                     let _permit = permit;
-                    let start = Instant::now();
-                    let now_epoch = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64;
-
-                    let builder = match config.method.to_uppercase().as_str() {
-                        "GET" => client.get(&config.url),
-                        "POST" => client.post(&config.url),
-                        "PUT" => client.put(&config.url),
-                        "DELETE" => client.delete(&config.url),
-                        "PATCH" => client.patch(&config.url),
-                        _ => client.get(&config.url),
-                    };
-                    let mut builder = builder;
-                    for (k, v) in &config.headers {
-                        builder = builder.header(k, v);
+                    let result = LoadTestEngine::execute_single_request(
+                        &client, &config, &body_bytes, id, &cancel,
+                    ).await;
+                    if result.error.as_deref() == Some("Cancelled") {
+                        cancelled_count.fetch_add(1, Ordering::Relaxed);
                     }
-                    if let Some(b) = &body_bytes {
-                        builder = builder.body(b.clone());
-                    }
-
-                    let request = match builder.build() {
-                        Ok(r) => r,
-                        Err(e) => {
-                            let res = RequestResult {
-                                id,
-                                success: false,
-                                status_code: None,
-                                latency_ms: 0.0,
-                                error: Some(format!("Request build error: {}", e)),
-                                response_size_bytes: 0,
-                                timestamp_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
-                                response_body: None,
-                            };
-                            results.lock().push(res.clone());
-                            callback(0.0, res);
-                            return;
-                        }
-                    };
-                    let result = tokio::select! {
-                        biased;
-                        _ = cancel.cancelled() => {
-                            cancelled_count.fetch_add(1, Ordering::Relaxed);
-                            return;
-                        }
-                        resp = client.execute(request) => match resp {
-                            Ok(response) => { 
-                                let status = response.status().as_u16();
-                                let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
-                                
-                                let body_bytes = tokio::select! {
-                                    biased;
-                                    _ = cancel.cancelled() => {
-                                        cancelled_count.fetch_add(1, Ordering::Relaxed);
-                                        return;
-                                    }
-                                    b = response.bytes() => b.unwrap_or_default()
-                                };
-
-                                let success = status >= 200 && status < 300;
-                                RequestResult {
-                                    id,
-                                    success,
-                                    status_code: Some(status),
-                                    latency_ms,
-                                    error: if success { None } else { Some(format!("HTTP {}", status)) },
-                                    response_size_bytes: body_bytes.len(),
-                                    timestamp_ms: now_epoch,
-                                    response_body: if body_bytes.is_empty() { None } else {
-                                        let cap = body_bytes.len().min(BODY_PREVIEW_BYTES);
-                                        Some(String::from_utf8_lossy(&body_bytes[..cap]).into_owned())
-                                    },
-                                }
-                            },
-                            Err(e) => RequestResult {
-                                id, success: false, status_code: None,
-                                latency_ms: start.elapsed().as_secs_f64()*1000.0,
-                                error: Some(classify_error(&e)), response_size_bytes: 0, timestamp_ms: now_epoch, response_body: None
-                            }
-                        }
-                    };
                     callback(0.0, result.clone());
                     results.lock().push(result);
                 });
@@ -814,99 +757,12 @@ impl LoadTestEngine {
                 
                 handles.push(tokio::spawn(async move {
                     let _p = permit;
-                    let start = Instant::now();
-                    
-                    let mut builder = match config.method.to_uppercase().as_str() {
-                        "GET" => client.get(&config.url),
-                        "POST" => client.post(&config.url),
-                        "PUT" => client.put(&config.url),
-                        "DELETE" => client.delete(&config.url),
-                        "PATCH" => client.patch(&config.url),
-                        _ => client.get(&config.url),
-                    };
-                    for (key, value) in &config.headers {
-                        builder = builder.header(key, value);
-                    }
-                    if let Some(b) = &body_bytes {
-                        builder = builder.body(b.clone());
-                    }
-                    let request = match builder.build() {
-                        Ok(r) => r,
-                        Err(e) => {
-                            let res = RequestResult {
-                                id,
-                                success: false,
-                                status_code: None,
-                                latency_ms: 0.0,
-                                error: Some(format!("Request build error: {}", e)),
-                                response_size_bytes: 0,
-                                timestamp_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64,
-                                response_body: None,
-                            };
-                            results.lock().push(res.clone());
-                            callback(0.0, res);
-                            return false;
-                        }
-                    };
-
-                    let (success, res) = tokio::select! {
-                        biased;
-                        _ = cancel.cancelled() => {
-                            // Cancelled instantly!
-                            let res = RequestResult {
-                                id, success: false, status_code: None, latency_ms: 0.0,
-                                error: Some("Cancelled".to_string()), response_size_bytes: 0, timestamp_ms: 0, response_body: None
-                            };
-                            (false, res)
-                        }
-                        resp = client.execute(request) => {
-                            let (is_ok, status, conn_err) = match &resp {
-                                Ok(r) => (r.status().is_success(), Some(r.status().as_u16()), None),
-                                Err(e) => (false, None, Some(classify_error(e))),
-                            };
-                            let mut body_len = 0;
-                            let mut body_preview = None;
-
-                            if let Ok(r) = resp {
-                                let body_res = tokio::select! {
-                                    biased;
-                                    _ = cancel.cancelled() => None,
-                                    b = r.bytes() => b.ok()
-                                };
-                                
-                                if let Some(bytes) = body_res {
-                                    body_len = bytes.len();
-                                    if !bytes.is_empty() {
-                                        let cap = bytes.len().min(BODY_PREVIEW_BYTES);
-                                        body_preview = Some(String::from_utf8_lossy(&bytes[..cap]).into_owned());
-                                    }
-                                }
-                            }
-
-                            let error_msg = if is_ok {
-                                None
-                            } else if let Some(ce) = conn_err {
-                                Some(ce)
-                            } else {
-                                Some(format!("HTTP {}", status.unwrap_or(0)))
-                            };
-
-                            let res = RequestResult {
-                                id, 
-                                success: is_ok, 
-                                status_code: status, 
-                                latency_ms: start.elapsed().as_secs_f64()*1000.0,
-                                error: error_msg, 
-                                response_size_bytes: body_len, 
-                                timestamp_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64, 
-                                response_body: body_preview
-                            };
-                            (is_ok, res)
-                        }
-                    };
-
-                    callback(0.0, res.clone());
-                    results.lock().push(res);
+                    let result = LoadTestEngine::execute_single_request(
+                        &client, &config, &body_bytes, id, &cancel,
+                    ).await;
+                    let success = result.success;
+                    callback(0.0, result.clone());
+                    results.lock().push(result);
                     success
                 }));
             }
