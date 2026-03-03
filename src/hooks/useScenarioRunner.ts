@@ -247,22 +247,29 @@ export function useScenarioRunner(): UseScenarioRunnerReturn {
             iterations: step.iterations,
           };
 
-          // Race between test completion and step timeout
-          const timeoutPromise = new Promise<never>((_, reject) =>
-            setTimeout(async () => {
+          // Race between test completion and step hard timeout
+          let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+          const timeoutPromise = new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(async () => {
               await stopTest().catch(() => {});
               reject(
                 new Error(
                   `Step timed out after ${STEP_TIMEOUT_MS / 1000}s — use Burst mode for Flows`,
                 ),
               );
-            }, STEP_TIMEOUT_MS),
-          );
+            }, STEP_TIMEOUT_MS);
+          });
 
-          const result = await Promise.race([
-            runLoadTest(stepConfig, () => {}),
-            timeoutPromise,
-          ]);
+          let result: Awaited<ReturnType<typeof runLoadTest>>;
+          try {
+            result = await Promise.race([
+              runLoadTest(stepConfig, () => {}),
+              timeoutPromise,
+            ]);
+          } finally {
+            // ✅ Luôn clear timeout — tránh stopTest() gọi nhầm vào step tiếp theo
+            if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+          }
 
           // 🔗 Store result context for variable injection in later steps
           const firstSuccess = result.timeline.find((r) => r.success);

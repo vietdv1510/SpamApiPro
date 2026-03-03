@@ -45,34 +45,36 @@ pub async fn run_load_test(
     }
 
 
-    // ⚡ CRITICAL: Cancel bất kỳ test nào đang chạy trước đó + emit event cho Frontend
-    {
-        let old_token = state.cancel_token.lock().clone();
-        if let Some(old_cancel) = old_token {
+    // ⚡ CRITICAL: Cancel bất kỳ test nào đang chạy — giữ lock liên tục để tránh race condition
+    // Nếu 2 requests đến đồng thời không thể cả 2 cùng cancel + ghi token mới
+    let cancel = {
+        let mut token_lock = state.cancel_token.lock();
+        if let Some(old_cancel) = token_lock.take() {
             log::debug!("🔄 [CMD] Cancelling previous run...");
             old_cancel.cancel();
-            // Emit event để Frontend biết test cũ bị huỷ (tránh ghost 'Running' state)
-            let _ = app.emit("test_force_cancelled", serde_json::json!({
-                "reason": "New test started"
-            }));
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            let _ = app.emit("test_force_cancelled", serde_json::json!({ "reason": "New test started" }));
         }
-    }
-
-    // Tạo cancel token mới cho run này
-    let cancel = CancellationToken::new();
-    {
-        let mut token_lock = state.cancel_token.lock();
-        *token_lock = Some(cancel.clone());
-    }
+        let new_cancel = CancellationToken::new();
+        *token_lock = Some(new_cancel.clone());
+        new_cancel
+    };
+    // Brief yield để cancel signal propagate trước khi start engine mới
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let engine = LoadTestEngine::new(config.timeout_ms, config.ignore_ssl_errors)?;
     let app_clone = app.clone();
     let cancel_clone = cancel.clone();
 
-    // ⚡ Global timeout = timeout_ms * 2 + 30s (warm-up buffer)
-    let global_timeout_ms = (config.timeout_ms * 2) + 30_000;
-    log::debug!("⏱️ [CMD] Global timeout: {}ms", global_timeout_ms);
+    // ⚡ Per-mode global timeout — Stress Test cần nhiều phút, Burst chỉ vài giây
+    let global_timeout_ms: u64 = match config.mode {
+        crate::engine::TestMode::StressTest => 30 * 60_000, // 30 phút
+        crate::engine::TestMode::Constant | crate::engine::TestMode::RampUp => {
+            let dur_ms = config.duration_secs.unwrap_or(60) as u64 * 1_000;
+            dur_ms + config.timeout_ms + 30_000 // duration + 1 req timeout + buffer
+        }
+        crate::engine::TestMode::Burst => config.timeout_ms * 3 + 30_000,
+    };
+    log::debug!("⏱️ [CMD] Global timeout: {}ms (mode={:?})", global_timeout_ms, config.mode);
 
     let engine_future = engine
         .run(config, cancel_clone, move |progress, req_result| {
@@ -166,6 +168,13 @@ pub async fn get_history(state: State<'_, AppState>, limit: Option<u32>) -> Resu
 
 #[tauri::command]
 pub async fn save_history(state: State<'_, AppState>, payload: SaveHistoryPayload) -> Result<i64, String> {
+    // Validate payload sizes để tránh DB bloat
+    if payload.result_json.len() > 10 * 1024 * 1024 {
+        return Err("result_json exceeds 10MB limit".to_string());
+    }
+    if payload.config_json.len() > 512 * 1024 {
+        return Err("config_json exceeds 512KB limit".to_string());
+    }
     state.db.async_save_history(
         payload.timestamp,
         payload.url,
@@ -301,8 +310,9 @@ fn tokenize_curl(cmd: &str) -> Vec<String> {
                 in_double = !in_double;
             }
             '\\' if !in_single && !in_double => {
-                if matches!(chars.peek(), Some('\n') | Some('\r')) {
-                    chars.next();
+                match chars.peek() {
+                    Some('\n') | Some('\r') => { chars.next(); } // line continuation
+                    _ => current.push('\\'), // H-3: keep backslash, don't drop silently
                 }
             }
             ' ' | '\t' | '\n' | '\r' if !in_single && !in_double => {
@@ -325,6 +335,10 @@ fn tokenize_curl(cmd: &str) -> Vec<String> {
 /// Parse curl command thành TestConfig
 #[tauri::command]
 pub fn parse_curl(curl_command: String) -> Result<TestConfig, String> {
+    // C-1: Limit curl input để tránh OOM khi tokenize chuỗi cực dài
+    if curl_command.len() > 64 * 1024 {
+        return Err("curl command too long (max 64KB)".to_string());
+    }
     let mut url = String::new();
     let mut method = "GET".to_string();
     let mut headers = std::collections::HashMap::new();

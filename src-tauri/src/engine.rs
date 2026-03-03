@@ -814,17 +814,17 @@ impl LoadTestEngine {
 
     /// Tính toán tổng hợp metrics từ raw results
     fn aggregate_results(&self, results: Vec<RequestResult>, total_duration_ms: f64) -> TestResult {
-        self._aggregate_results_inner(results, total_duration_ms)
+        self.aggregate_results_impl(results, total_duration_ms)
     }
 
     /// Public alias dùng trong unit tests để test aggregate logic trực tiếp
     #[cfg(test)]
     pub fn aggregate_results_pub(&self, results: Vec<RequestResult>, total_duration_ms: f64) -> TestResult {
-        self._aggregate_results_inner(results, total_duration_ms)
+        self.aggregate_results_impl(results, total_duration_ms)
     }
 
     /// Internal implementation — called by both aggregate_results and test alias
-    fn _aggregate_results_inner(&self, results: Vec<RequestResult>, total_duration_ms: f64) -> TestResult {
+    fn aggregate_results_impl(&self, results: Vec<RequestResult>, total_duration_ms: f64) -> TestResult {
         let total = results.len() as u64;
         let mut hist = Histogram::<u64>::new(3).unwrap();
         let mut success_count = 0u64;
