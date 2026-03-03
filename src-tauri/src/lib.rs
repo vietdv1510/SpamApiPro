@@ -10,8 +10,9 @@ use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 🛡️ Khởi tạo Sentry - Mắt thần báo lỗi cho Backend
-    let _guard = sentry::init(("https://4c90b9c2daaf333a57c7b65bf84d78fb@o4510973801005056.ingest.de.sentry.io/4510973863985232", sentry::ClientOptions {
+    // 🛡️ Sentry — DSN từ compile-time env var SENTRY_DSN (không hardcode secret)
+    let sentry_dsn = option_env!("SENTRY_DSN").unwrap_or("");
+    let _guard = sentry::init((sentry_dsn, sentry::ClientOptions {
         release: sentry::release_name!(),
         ..Default::default()
     }));

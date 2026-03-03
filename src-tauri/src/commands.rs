@@ -175,6 +175,31 @@ pub fn clear_all_history(state: State<'_, AppState>) -> Result<(), String> {
 /// Mở file bằng ứng dụng mặc định của hệ thống (macOS: open, Linux: xdg-open, Windows: start)
 #[tauri::command]
 pub fn open_file(path: String) -> Result<(), String> {
+    use std::path::Path;
+
+    let p = Path::new(&path);
+
+    // Validate: phải là absolute path
+    if !p.is_absolute() {
+        return Err("Only absolute paths are allowed".to_string());
+    }
+
+    // Validate: file phải tồn tại
+    if !p.exists() {
+        return Err(format!("File not found: {}", path));
+    }
+
+    // Block path traversal sequences
+    let path_str = path.replace('\\', "/");
+    if path_str.contains("../") || path_str.contains("/./") {
+        return Err("Path traversal not allowed".to_string());
+    }
+
+    // Chỉ mở file (không mở directory)
+    if p.is_dir() {
+        return Err("Cannot open directories".to_string());
+    }
+
     #[cfg(target_os = "macos")]
     let cmd = "open";
     #[cfg(target_os = "linux")]
@@ -324,6 +349,6 @@ pub fn parse_curl(curl_command: String) -> Result<TestConfig, String> {
         mode: crate::engine::TestMode::Burst,
         timeout_ms: 10_000,
         think_time_ms: 0,
-        ignore_ssl_errors: true,
+        ignore_ssl_errors: false,
     })
 }

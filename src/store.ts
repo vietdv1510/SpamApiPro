@@ -140,7 +140,7 @@ export const useAppStore = create<AppState>()((set, get) => ({
     mode: "burst" as TestMode,
     timeout_ms: 10000,
     think_time_ms: 0,
-    ignore_ssl_errors: true, // Mặc định bypass SSL cho tiện lúc mới cài
+    ignore_ssl_errors: false, // Phải opt-in — không bypass SSL mặc định
   },
   headerRows: [
     { key: "Content-Type", value: "application/json", enabled: true },
