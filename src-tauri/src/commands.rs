@@ -160,21 +160,21 @@ pub struct SaveHistoryPayload {
 }
 
 #[tauri::command]
-pub fn get_history(state: State<'_, AppState>, limit: Option<u32>) -> Result<Vec<HistoryEntry>, String> {
-    state.db.get_history(limit.unwrap_or(50))
+pub async fn get_history(state: State<'_, AppState>, limit: Option<u32>) -> Result<Vec<HistoryEntry>, String> {
+    state.db.async_get_history(limit.unwrap_or(50)).await
 }
 
 #[tauri::command]
-pub fn save_history(state: State<'_, AppState>, payload: SaveHistoryPayload) -> Result<i64, String> {
-    state.db.save_history(
-        &payload.timestamp,
-        &payload.url,
-        &payload.method,
-        &payload.mode,
+pub async fn save_history(state: State<'_, AppState>, payload: SaveHistoryPayload) -> Result<i64, String> {
+    state.db.async_save_history(
+        payload.timestamp,
+        payload.url,
+        payload.method,
+        payload.mode,
         payload.virtual_users,
-        &payload.config_json,
-        &payload.result_json,
-    )
+        payload.config_json,
+        payload.result_json,
+    ).await
 }
 
 #[tauri::command]
@@ -244,6 +244,17 @@ pub fn save_scenario(
     name: String,
     steps_json: String,
 ) -> Result<i64, String> {
+    // Validate
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Scenario name cannot be empty".to_string());
+    }
+    if steps_json.len() > 512 * 1024 {
+        return Err("steps_json exceeds 512KB limit".to_string());
+    }
+    serde_json::from_str::<serde_json::Value>(&steps_json)
+        .map_err(|e| format!("steps_json is not valid JSON: {}", e))?;
+
     state.db.save_scenario(&name, &steps_json)
 }
 
@@ -254,6 +265,17 @@ pub fn update_scenario(
     name: String,
     steps_json: String,
 ) -> Result<(), String> {
+    // Validate
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Scenario name cannot be empty".to_string());
+    }
+    if steps_json.len() > 512 * 1024 {
+        return Err("steps_json exceeds 512KB limit".to_string());
+    }
+    serde_json::from_str::<serde_json::Value>(&steps_json)
+        .map_err(|e| format!("steps_json is not valid JSON: {}", e))?;
+
     state.db.update_scenario(id, &name, &steps_json)
 }
 
@@ -326,7 +348,7 @@ pub fn parse_curl(curl_command: String) -> Result<TestConfig, String> {
                 if i < tokens.len() {
                     let header = &tokens[i];
                     if let Some(colon_pos) = header.find(':') {
-                        let key = header[..colon_pos].trim().to_lowercase();
+                        let key = header[..colon_pos].trim().to_string(); // preserve original case
                         let value = header[colon_pos + 1..].trim().to_string();
                         headers.insert(key, value);
                     }

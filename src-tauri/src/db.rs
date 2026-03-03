@@ -76,8 +76,19 @@ impl Database {
         )
         .map_err(|e| format!("Cannot create scenarios table: {}", e))?;
 
-        // ⚡ Fix 3.2: VACUUM khi khởi động để thu hồi dung lượng từ các row đã xoá
-        let _ = conn.execute_batch("VACUUM;");
+        // Chỉ VACUUM khi DB thực sự cần (> 1000 pages ≈ 4MB) để tránh startup lag
+        let page_count: i64 = conn
+            .query_row("PRAGMA page_count", [], |r| r.get(0))
+            .unwrap_or(0);
+        let freelist_count: i64 = conn
+            .query_row("PRAGMA freelist_count", [], |r| r.get(0))
+            .unwrap_or(0);
+        // VACUUM nếu > 20% fragmented và DB đủ lớn
+        if page_count > 1000 && freelist_count * 5 > page_count {
+            let _ = conn.execute_batch("VACUUM;");
+            log::debug!("vacuumed db: {}/{} free pages", freelist_count, page_count);
+        }
+
 
         log::debug!("📦 [DB] SQLite opened at {:?}", db_path);
         Ok(Self {
@@ -205,5 +216,68 @@ impl Database {
         conn.execute("DELETE FROM scenarios WHERE id = ?1", params![id])
             .map_err(|e| format!("Delete scenario error: {}", e))?;
         Ok(())
+    }
+}
+
+/// ─── Async wrappers: offload blocking SQLite I/O ra Tokio thread pool ───
+/// Dùng spawn_blocking để Tokio worker threads không bị block khi SQLite đang I/O.
+impl Database {
+    pub async fn async_save_history(
+        &self,
+        timestamp: String,
+        url: String,
+        method: String,
+        mode: String,
+        virtual_users: u32,
+        config_json: String,
+        result_json: String,
+    ) -> Result<i64, String> {
+        let db = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.lock();
+            conn.execute(
+                "INSERT INTO test_history (timestamp, url, method, mode, virtual_users, config_json, result_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![timestamp, url, method, mode, virtual_users, config_json, result_json],
+            )
+            .map_err(|e| format!("Insert error: {}", e))?;
+            Ok(conn.last_insert_rowid())
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking error: {}", e))?
+    }
+
+    pub async fn async_get_history(&self, limit: u32) -> Result<Vec<HistoryEntry>, String> {
+        let db = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn = db.lock();
+            let mut stmt = conn
+                .prepare(
+                    "SELECT id, timestamp, url, method, mode, virtual_users, config_json, result_json
+                     FROM test_history ORDER BY id DESC LIMIT ?1",
+                )
+                .map_err(|e| format!("Prepare error: {}", e))?;
+            let rows = stmt
+                .query_map(params![limit], |row| {
+                    Ok(HistoryEntry {
+                        id: row.get(0)?,
+                        timestamp: row.get(1)?,
+                        url: row.get(2)?,
+                        method: row.get(3)?,
+                        mode: row.get(4)?,
+                        virtual_users: row.get(5)?,
+                        config_json: row.get(6)?,
+                        result_json: row.get(7)?,
+                    })
+                })
+                .map_err(|e| format!("Query error: {}", e))?;
+            let mut entries = Vec::new();
+            for row in rows {
+                entries.push(row.map_err(|e| format!("Row error: {}", e))?);
+            }
+            Ok(entries)
+        })
+        .await
+        .map_err(|e| format!("spawn_blocking error: {}", e))?
     }
 }

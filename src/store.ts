@@ -1,5 +1,8 @@
 import { create } from "zustand";
 
+/** Max data points giữ trong live chart — trade-off: memory vs chart density */
+const LIVE_TIMELINE_LIMIT = 1000;
+
 export type TestMode = "burst" | "constant" | "ramp_up" | "stress_test";
 export type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH";
 
@@ -174,7 +177,10 @@ export const useAppStore = create<AppState>()((set, get) => ({
     set((s) => {
       const combined = [...s.liveTimeline, ...batch];
       return {
-        liveTimeline: combined.length > 200 ? combined.slice(-200) : combined,
+        liveTimeline:
+          combined.length > LIVE_TIMELINE_LIMIT
+            ? combined.slice(-LIVE_TIMELINE_LIMIT)
+            : combined,
         liveCounters: {
           done: s.liveCounters.done + batch.length,
           success:
