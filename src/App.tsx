@@ -286,35 +286,33 @@ function App() {
           </>
         )}
 
-        {/* ─── Section: Scenarios (always mounted, CSS toggle) ─── */}
-        <div
-          className="flex-1 flex flex-col overflow-hidden"
-          style={{ display: activeSection === "scenarios" ? "flex" : "none" }}
-        >
-          <div className="px-4 py-3 border-b border-bg-700">
-            <h2 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
-              Multi-Step Scenarios
-            </h2>
+        {/* ─── Section: Scenarios (Lazy mount) ─── */}
+        {activeSection === "scenarios" && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="px-4 py-3 border-b border-bg-700">
+              <h2 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
+                Multi-Step Scenarios
+              </h2>
+            </div>
+            <div className="flex-1 overflow-hidden p-4">
+              <Scenarios />
+            </div>
           </div>
-          <div className="flex-1 overflow-hidden p-4">
-            <Scenarios />
-          </div>
-        </div>
+        )}
 
-        {/* ─── Section: History (always mounted, CSS toggle) ─── */}
-        <div
-          className="flex-1 flex flex-col overflow-hidden"
-          style={{ display: activeSection === "history" ? "flex" : "none" }}
-        >
-          <div className="px-4 py-3 border-b border-bg-700">
-            <h2 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
-              Test History
-            </h2>
+        {/* ─── Section: History (Lazy mount) ─── */}
+        {activeSection === "history" && (
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <div className="px-4 py-3 border-b border-bg-700">
+              <h2 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
+                Test History
+              </h2>
+            </div>
+            <div className="flex-1 overflow-hidden p-4">
+              <History />
+            </div>
           </div>
-          <div className="flex-1 overflow-hidden p-4">
-            <History />
-          </div>
-        </div>
+        )}
       </div>
 
       {/* Status Bar */}
