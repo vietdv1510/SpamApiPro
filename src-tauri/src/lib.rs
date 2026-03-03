@@ -1,6 +1,8 @@
 mod commands;
 mod db;
 mod engine;
+#[cfg(test)]
+mod tests;
 
 use commands::{
     clear_all_history, delete_history, delete_scenario, get_history, get_scenarios, open_file,
