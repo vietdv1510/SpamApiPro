@@ -6,6 +6,8 @@ import {
   type Header,
 } from "../store";
 import { useTestRunner } from "../hooks/useTestRunner";
+import { AuthProfilesPanel } from "./AuthProfilesPanel";
+import { PresetsPanel } from "./PresetsPanel";
 
 const METHODS: { value: HttpMethod; color: string }[] = [
   { value: "GET", color: "#34d399" },
@@ -42,6 +44,8 @@ export function TestConfig() {
   const [usersInput, setUsersInput] = useState(String(config.virtual_users));
   const [runError, setRunError] = useState<string | null>(null);
   const [showMethodPicker, setShowMethodPicker] = useState(false);
+  const [showAuthPanel, setShowAuthPanel] = useState(false);
+  const [showPresetsPanel, setShowPresetsPanel] = useState(false);
 
   useEffect(() => {
     if (showCurlImport && curlRef.current) curlRef.current.focus();
@@ -241,19 +245,63 @@ export function TestConfig() {
         )}
 
         {/* Headers */}
-        <div className="min-w-0">
+        <div className="min-w-0 relative">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs uppercase tracking-wider text-gray-500 font-semibold">
               Headers
             </h3>
-            <button
-              onClick={addHeader}
-              className="text-xs text-gray-600 hover:text-primary transition-colors px-1.5 py-0.5 rounded hover:bg-primary/10"
-              title="Add header"
-            >
-              + Add
-            </button>
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => {
+                  setShowAuthPanel((v) => !v);
+                  setShowPresetsPanel(false);
+                }}
+                className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                  showAuthPanel
+                    ? "bg-primary/10 border-primary/30 text-primary"
+                    : "bg-bg-600 border-bg-500 text-gray-600 hover:text-gray-400"
+                }`}
+                title="Auth Profiles"
+              >
+                🔐 Auth
+              </button>
+              <button
+                onClick={() => {
+                  setShowPresetsPanel((v) => !v);
+                  setShowAuthPanel(false);
+                }}
+                className={`text-[10px] px-2 py-0.5 rounded border transition-colors ${
+                  showPresetsPanel
+                    ? "bg-primary/10 border-primary/30 text-primary"
+                    : "bg-bg-600 border-bg-500 text-gray-600 hover:text-gray-400"
+                }`}
+                title="Presets"
+              >
+                📦 Presets
+              </button>
+              <button
+                onClick={addHeader}
+                className="text-xs text-gray-600 hover:text-primary transition-colors px-1.5 py-0.5 rounded hover:bg-primary/10"
+                title="Add header"
+              >
+                + Add
+              </button>
+            </div>
           </div>
+
+          {/* Auth Profiles floating panel */}
+          {showAuthPanel && (
+            <div className="absolute left-0 right-0 top-8 z-20 slide-in">
+              <AuthProfilesPanel onClose={() => setShowAuthPanel(false)} />
+            </div>
+          )}
+
+          {/* Presets floating panel */}
+          {showPresetsPanel && (
+            <div className="absolute left-0 right-0 top-8 z-20 slide-in">
+              <PresetsPanel onClose={() => setShowPresetsPanel(false)} />
+            </div>
+          )}
           <div className="space-y-1.5">
             {headerRows.map((row, i) => (
               <div key={i} className="flex gap-1.5 items-center min-w-0">

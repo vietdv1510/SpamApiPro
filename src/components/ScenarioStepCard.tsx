@@ -50,6 +50,8 @@ export interface ScenarioStep {
   assertions: Assertion[];
   status: "pending" | "running" | "passed" | "failed" | "skipped";
   summary?: string;
+  /** Retry on failure — max N times before marking failed (default 0 = no retry) */
+  retry?: number;
 }
 
 const METHODS: HttpMethod[] = ["GET", "POST", "PUT", "DELETE", "PATCH"];

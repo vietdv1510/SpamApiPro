@@ -23,36 +23,88 @@ interface StepContext {
   bodyJson: Record<string, unknown> | null;
 }
 
+// ─── Built-in Variables ───
+// Resolve {{$varName}} hoặc {{$varName:arg}} — giá trị mới mỗi lần gọi
+
+function resolveBuiltins(text: string): string {
+  return text.replace(
+    /\{\{\$([^}:]+)(?::([^}]*))?\}\}/g,
+    (_match, name, arg) => {
+      switch (name) {
+        case "uuid":
+          return crypto.randomUUID();
+        case "timestamp":
+          return String(Date.now());
+        case "iso_date":
+          return new Date().toISOString();
+        case "random_int": {
+          // {{$random_int:1:1000}} hoặc {{$random_int}} (0–10000)
+          const parts = arg ? arg.split(":").map(Number) : [0, 10000];
+          const min = parts[0] ?? 0;
+          const max = parts[1] ?? 10000;
+          return String(Math.floor(Math.random() * (max - min + 1)) + min);
+        }
+        case "random_str": {
+          // {{$random_str:8}} — độ dài tùy chọn (default 8)
+          const len = arg ? parseInt(arg) : 8;
+          return Array.from(
+            { length: len },
+            () => Math.random().toString(36)[2] ?? "x",
+          ).join("");
+        }
+        case "random_email":
+          return `test_${Math.random().toString(36).slice(2, 10)}@spamapi.test`;
+        default:
+          return _match; // unknown builtin — leave as-is
+      }
+    },
+  );
+}
+
 /**
  * Resolve {{stepName.field}} variables in a string.
  * Supported patterns:
  *   {{stepName.status}}       → HTTP status code (e.g. "200")
  *   {{stepName.body}}         → raw response body text
  *   {{stepName.body.field}}   → JSON field from body (dot notation)
+ *
+ * Built-in variables ({{$name}}):
+ *   {{$uuid}}                 → random UUIDv4
+ *   {{$timestamp}}            → Unix ms timestamp
+ *   {{$iso_date}}             → ISO 8601 datetime
+ *   {{$random_int:1:100}}     → random integer in range
+ *   {{$random_str:8}}         → random alphanumeric string
+ *   {{$random_email}}         → random test email
  */
 function resolveVariables(
   text: string,
   ctx: Record<string, StepContext>,
 ): string {
-  return text.replace(/\{\{(\w+)\.([^}]+)\}\}/g, (match, stepName, path) => {
-    const stepCtx = ctx[stepName];
-    if (!stepCtx) return match; // leave unresolved
+  // 1. Resolve built-ins first
+  const withBuiltins = resolveBuiltins(text);
+  // 2. Resolve step variables
+  return withBuiltins.replace(
+    /\{\{(\w+)\.([^}]+)\}\}/g,
+    (match, stepName, path) => {
+      const stepCtx = ctx[stepName];
+      if (!stepCtx) return match; // leave unresolved
 
-    if (path === "status") {
-      return stepCtx.status !== null ? String(stepCtx.status) : match;
-    }
-    if (path === "body") {
-      return stepCtx.body || match;
-    }
-    // body.field.nested.path
-    if (path.startsWith("body.")) {
-      const jsonPath = path.slice(5); // remove "body."
-      if (!stepCtx.bodyJson) return match;
-      const value = getNestedValue(stepCtx.bodyJson, jsonPath);
-      return value !== undefined ? String(value) : match;
-    }
-    return match;
-  });
+      if (path === "status") {
+        return stepCtx.status !== null ? String(stepCtx.status) : match;
+      }
+      if (path === "body") {
+        return stepCtx.body || match;
+      }
+      // body.field.nested.path
+      if (path.startsWith("body.")) {
+        const jsonPath = path.slice(5); // remove "body."
+        if (!stepCtx.bodyJson) return match;
+        const value = getNestedValue(stepCtx.bodyJson, jsonPath);
+        return value !== undefined ? String(value) : match;
+      }
+      return match;
+    },
+  );
 }
 
 function getNestedValue(obj: Record<string, unknown>, path: string): unknown {
@@ -219,131 +271,173 @@ export function useScenarioRunner(): UseScenarioRunnerReturn {
           continue;
         }
 
-        try {
-          // 🔗 Variable Injection — resolve {{stepName.field}} in URL/headers/body
-          const injected = injectVariables(step, varContext);
+        // ─── Retry loop ───
+        const maxAttempts = 1 + Math.max(0, step.retry ?? 0);
+        let lastErr: unknown = null;
+        let stepPassed = false;
 
-          // ⚠️ Cảnh báo Stress Test trong Flows — sẽ rất lâu
-          if (step.mode === "stress_test") {
-            showToast(
-              "⚠️ Stress Test in Flows may take a long time. Use Burst for quick checks.",
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          const isRetry = attempt > 0;
+          if (isRetry) {
+            onStepUpdate(step.id, {
+              status: "running",
+              summary: `Retry ${attempt}/${maxAttempts - 1}…`,
+            });
+            // 1s delay between retries
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+
+          try {
+            // 🔗 Variable Injection — resolve {{stepName.field}} in URL/headers/body
+            const injected = injectVariables(step, varContext);
+
+            // ⚠️ Cảnh báo Stress Test trong Flows — sẽ rất lâu
+            if (step.mode === "stress_test" && attempt === 0) {
+              showToast(
+                "⚠️ Stress Test in Flows may take a long time. Use Burst for quick checks.",
+              );
+            }
+
+            // ⏱️ Per-step timeout: Burst=30s, others=60s — tránh treo mãi mãi
+            const STEP_TIMEOUT_MS = step.mode === "burst" ? 30_000 : 60_000;
+
+            const stepConfig = {
+              url: injected.url,
+              method: step.method,
+              headers: injected.headers,
+              body: injected.body?.trim() || null,
+              virtual_users: step.virtual_users,
+              mode: step.mode,
+              timeout_ms: step.timeout_ms,
+              think_time_ms: step.think_time_ms,
+              ignore_ssl_errors: step.ignore_ssl_errors,
+              duration_secs: step.duration_secs,
+              iterations: step.iterations,
+            };
+
+            // Race between test completion and step hard timeout
+            let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+            const timeoutPromise = new Promise<never>((_, reject) => {
+              timeoutHandle = setTimeout(async () => {
+                await stopTest().catch(() => {});
+                reject(
+                  new Error(
+                    `Step timed out after ${STEP_TIMEOUT_MS / 1000}s — use Burst mode for Flows`,
+                  ),
+                );
+              }, STEP_TIMEOUT_MS);
+            });
+
+            let result: Awaited<ReturnType<typeof runLoadTest>>;
+            try {
+              result = await Promise.race([
+                runLoadTest(stepConfig, () => {}),
+                timeoutPromise,
+              ]);
+            } finally {
+              if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+            }
+
+            // 🔗 Store result context for variable injection in later steps
+            const firstSuccess = result.timeline.find((r) => r.success);
+            varContext[step.name] = {
+              status: firstSuccess?.status_code ?? null,
+              body: firstSuccess?.response_body ?? "",
+              bodyJson: (() => {
+                try {
+                  return JSON.parse(firstSuccess?.response_body ?? "");
+                } catch {
+                  return null;
+                }
+              })(),
+            };
+
+            const successRate =
+              result.total_requests > 0
+                ? (result.success_count / result.total_requests) * 100
+                : 0;
+
+            // ✅ Evaluate assertions
+            let passed: boolean;
+            let evaluatedAssertions: Assertion[] = [];
+
+            if (step.assertions.length > 0) {
+              evaluatedAssertions = evaluateAssertions(step.assertions, result);
+              passed = evaluatedAssertions.every((a) => a.passed);
+            } else {
+              passed = successRate >= 95;
+            }
+
+            const retrySuffix =
+              attempt > 0 ? ` (passed on retry ${attempt})` : "";
+            const assertionSummary =
+              step.assertions.length > 0
+                ? ` · ${evaluatedAssertions.filter((a) => a.passed).length}/${evaluatedAssertions.length} assertions`
+                : "";
+
+            stepPassed = passed;
+
+            onStepUpdate(step.id, {
+              status: passed
+                ? "passed"
+                : attempt < maxAttempts - 1
+                  ? "running"
+                  : "failed",
+              summary: `${successRate.toFixed(0)}% · ${result.requests_per_second.toFixed(0)} RPS · P95: ${result.latency_p95_ms.toFixed(0)}ms${assertionSummary}${retrySuffix}`,
+              assertions: evaluatedAssertions,
+            });
+
+            setRunResults((prev) =>
+              prev.map((r, idx) =>
+                idx === i
+                  ? {
+                      ...r,
+                      status: passed
+                        ? "passed"
+                        : attempt < maxAttempts - 1
+                          ? "running"
+                          : ("failed" as StepResult["status"]),
+                      successRate,
+                      rps: result.requests_per_second,
+                      p95: result.latency_p95_ms,
+                      totalReqs: result.total_requests,
+                    }
+                  : r,
+              ),
+            );
+
+            setStepResults((prev) => ({ ...prev, [step.id]: result }));
+            if (i === 0) setSelectedResultStepId(step.id);
+
+            if (passed) break; // Exit retry loop on success
+            lastErr = new Error(
+              `Step failed with ${successRate.toFixed(0)}% success rate`,
+            );
+          } catch (err) {
+            lastErr = err;
+            if (attempt === maxAttempts - 1) {
+              // Last attempt — propagate
+              throw err;
+            }
+          }
+        }
+
+        if (!stepPassed) {
+          allPassed = false;
+          if (lastErr !== null && maxAttempts > 1) {
+            // Update final failed state after all retries exhausted
+            onStepUpdate(step.id, {
+              status: "failed",
+              summary: `Failed after ${maxAttempts} attempt(s): ${String(lastErr)}`,
+            });
+            setRunResults((prev) =>
+              prev.map((r, idx) =>
+                idx === i
+                  ? { ...r, status: "failed" as const, error: String(lastErr) }
+                  : r,
+              ),
             );
           }
-
-          // ⏱️ Per-step timeout: Burst=30s, others=60s — tránh treo mãi mãi
-          const STEP_TIMEOUT_MS = step.mode === "burst" ? 30_000 : 60_000;
-
-          const stepConfig = {
-            url: injected.url,
-            method: step.method,
-            headers: injected.headers,
-            body: injected.body?.trim() || null,
-            virtual_users: step.virtual_users,
-            mode: step.mode,
-            timeout_ms: step.timeout_ms,
-            think_time_ms: step.think_time_ms,
-            ignore_ssl_errors: step.ignore_ssl_errors,
-            duration_secs: step.duration_secs,
-            iterations: step.iterations,
-          };
-
-          // Race between test completion and step hard timeout
-          let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-          const timeoutPromise = new Promise<never>((_, reject) => {
-            timeoutHandle = setTimeout(async () => {
-              await stopTest().catch(() => {});
-              reject(
-                new Error(
-                  `Step timed out after ${STEP_TIMEOUT_MS / 1000}s — use Burst mode for Flows`,
-                ),
-              );
-            }, STEP_TIMEOUT_MS);
-          });
-
-          let result: Awaited<ReturnType<typeof runLoadTest>>;
-          try {
-            result = await Promise.race([
-              runLoadTest(stepConfig, () => {}),
-              timeoutPromise,
-            ]);
-          } finally {
-            // ✅ Luôn clear timeout — tránh stopTest() gọi nhầm vào step tiếp theo
-            if (timeoutHandle !== null) clearTimeout(timeoutHandle);
-          }
-
-          // 🔗 Store result context for variable injection in later steps
-          const firstSuccess = result.timeline.find((r) => r.success);
-          varContext[step.name] = {
-            status: firstSuccess?.status_code ?? null,
-            body: firstSuccess?.response_body ?? "",
-            bodyJson: (() => {
-              try {
-                return JSON.parse(firstSuccess?.response_body ?? "");
-              } catch {
-                return null;
-              }
-            })(),
-          };
-
-          const successRate =
-            result.total_requests > 0
-              ? (result.success_count / result.total_requests) * 100
-              : 0;
-
-          // ✅ Evaluate assertions
-          let passed: boolean;
-          let evaluatedAssertions: Assertion[] = [];
-
-          if (step.assertions.length > 0) {
-            evaluatedAssertions = evaluateAssertions(step.assertions, result);
-            passed = evaluatedAssertions.every((a) => a.passed);
-          } else {
-            // Default: pass if success rate >= 95%
-            passed = successRate >= 95;
-          }
-
-          if (!passed) allPassed = false;
-
-          const assertionSummary =
-            step.assertions.length > 0
-              ? ` · ${evaluatedAssertions.filter((a) => a.passed).length}/${evaluatedAssertions.length} assertions`
-              : "";
-
-          onStepUpdate(step.id, {
-            status: passed ? "passed" : "failed",
-            summary: `${successRate.toFixed(0)}% · ${result.requests_per_second.toFixed(0)} RPS · P95: ${result.latency_p95_ms.toFixed(0)}ms${assertionSummary}`,
-            assertions: evaluatedAssertions,
-          });
-
-          setRunResults((prev) =>
-            prev.map((r, idx) =>
-              idx === i
-                ? {
-                    ...r,
-                    status: passed
-                      ? "passed"
-                      : ("failed" as StepResult["status"]),
-                    successRate,
-                    rps: result.requests_per_second,
-                    p95: result.latency_p95_ms,
-                    totalReqs: result.total_requests,
-                  }
-                : r,
-            ),
-          );
-
-          setStepResults((prev) => ({ ...prev, [step.id]: result }));
-          if (i === 0) setSelectedResultStepId(step.id);
-        } catch (err) {
-          allPassed = false;
-          onStepUpdate(step.id, { status: "failed", summary: String(err) });
-          setRunResults((prev) =>
-            prev.map((r, idx) =>
-              idx === i
-                ? { ...r, status: "failed" as const, error: String(err) }
-                : r,
-            ),
-          );
         }
 
         // Think time delay between steps
