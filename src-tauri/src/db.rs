@@ -96,7 +96,8 @@ impl Database {
         })
     }
 
-    /// Lưu một kết quả test vào history
+    /// Lưu một kết quả test vào history (sync version — dùng async_save_history cho Tauri commands)
+    #[allow(dead_code)]
     pub fn save_history(
         &self,
         timestamp: &str,
@@ -118,7 +119,8 @@ impl Database {
         Ok(conn.last_insert_rowid())
     }
 
-    /// Lấy toàn bộ history (mới nhất trước)
+    /// Lấy toàn bộ history (sync version — dùng async_get_history cho Tauri commands)
+    #[allow(dead_code)]
     pub fn get_history(&self, limit: u32) -> Result<Vec<HistoryEntry>, String> {
         let conn = self.conn.lock();
         let mut stmt = conn

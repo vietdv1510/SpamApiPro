@@ -1,5 +1,5 @@
 import { useState, useCallback } from "react";
-import { runLoadTest } from "../tauri";
+import { runLoadTest, stopTest } from "../tauri";
 import { showToast } from "../components/Dialogs";
 import type { ScenarioStep, Assertion } from "../components/ScenarioStepCard";
 import type { TestResult } from "../store";
@@ -223,22 +223,46 @@ export function useScenarioRunner(): UseScenarioRunnerReturn {
           // 🔗 Variable Injection — resolve {{stepName.field}} in URL/headers/body
           const injected = injectVariables(step, varContext);
 
-          const result = await runLoadTest(
-            {
-              url: injected.url,
-              method: step.method,
-              headers: injected.headers,
-              body: injected.body?.trim() || null,
-              virtual_users: step.virtual_users,
-              mode: step.mode,
-              timeout_ms: step.timeout_ms,
-              think_time_ms: step.think_time_ms,
-              ignore_ssl_errors: step.ignore_ssl_errors,
-              duration_secs: step.duration_secs,
-              iterations: step.iterations,
-            },
-            () => {},
+          // ⚠️ Cảnh báo Stress Test trong Flows — sẽ rất lâu
+          if (step.mode === "stress_test") {
+            showToast(
+              "⚠️ Stress Test in Flows may take a long time. Use Burst for quick checks.",
+            );
+          }
+
+          // ⏱️ Per-step timeout: Burst=30s, others=60s — tránh treo mãi mãi
+          const STEP_TIMEOUT_MS = step.mode === "burst" ? 30_000 : 60_000;
+
+          const stepConfig = {
+            url: injected.url,
+            method: step.method,
+            headers: injected.headers,
+            body: injected.body?.trim() || null,
+            virtual_users: step.virtual_users,
+            mode: step.mode,
+            timeout_ms: step.timeout_ms,
+            think_time_ms: step.think_time_ms,
+            ignore_ssl_errors: step.ignore_ssl_errors,
+            duration_secs: step.duration_secs,
+            iterations: step.iterations,
+          };
+
+          // Race between test completion and step timeout
+          const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(async () => {
+              await stopTest().catch(() => {});
+              reject(
+                new Error(
+                  `Step timed out after ${STEP_TIMEOUT_MS / 1000}s — use Burst mode for Flows`,
+                ),
+              );
+            }, STEP_TIMEOUT_MS),
           );
+
+          const result = await Promise.race([
+            runLoadTest(stepConfig, () => {}),
+            timeoutPromise,
+          ]);
 
           // 🔗 Store result context for variable injection in later steps
           const firstSuccess = result.timeline.find((r) => r.success);

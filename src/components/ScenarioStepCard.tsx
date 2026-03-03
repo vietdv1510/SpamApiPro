@@ -405,10 +405,10 @@ export function ScenarioStepCard({
                   })
                 }
               >
-                <option value="burst">Burst</option>
-                <option value="constant">Constant</option>
-                <option value="ramp_up">Ramp Up</option>
-                <option value="stress_test">Stress Test</option>
+                <option value="burst">Burst ⚡ (recommended)</option>
+                <option value="constant">Constant ⏱️</option>
+                <option value="ramp_up">Ramp Up 📈</option>
+                <option value="stress_test">Stress Test ⚠️ (slow)</option>
               </select>
             </div>
             <div className="flex-1">
