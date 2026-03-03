@@ -30,7 +30,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://*.sentry.io https://o4510973801005056.ingest.de.sentry.io; img-src 'self' data:; font-src 'self'; object-src 'none'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' https://o4510973801005056.ingest.de.sentry.io; img-src 'self' data:; font-src 'self'; object-src 'none'"
     }
   },
   "bundle": {
